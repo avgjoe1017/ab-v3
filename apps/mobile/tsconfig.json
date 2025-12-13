@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [
+      "react",
+      "react-native", // Add node for process.env if needed, though react-native usually has it via global
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "index.ts"
+  ]
+}

@@ -1,0 +1,5 @@
+src/AudioEngine.ts(3,10): error TS2724: '"expo-audio"' has no exported member named 'useAudioModule'. Did you mean 'AudioModule'?
+src/AudioEngine.ts(28,28): error TS2694: Namespace 'global.NodeJS' has no exported member 'Timeout'.
+src/AudioEngine.ts(100,48): error TS2693: 'AudioSource' only refers to a type, but is being used as a value here.
+src/AudioEngine.ts(103,48): error TS2693: 'AudioSource' only refers to a type, but is being used as a value here.
+src/AudioEngine.ts(107,47): error TS2693: 'AudioSource' only refers to a type, but is being used as a value here.

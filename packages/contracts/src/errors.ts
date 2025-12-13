@@ -1,0 +1,15 @@
+export type ApiErrorCode =
+  | "INVALID_SESSION_ID"
+  | "NOT_FOUND"
+  | "VALIDATION_ERROR"
+  | "ENTITLEMENT_REQUIRED"
+  | "FREE_LIMIT_REACHED"
+  | "SESSION_TOO_LONG"
+  | "AUDIO_NOT_READY"
+  | "INTERNAL_ERROR";
+
+export type ApiError = {
+  code: ApiErrorCode;
+  message: string;
+  details?: unknown;
+};

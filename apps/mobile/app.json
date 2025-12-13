@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Affirmation Beats V3",
+    "slug": "affirmation-beats-v3",
+    "scheme": "abv3",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      }
+    },
+    "plugins": []
+  }
+}
