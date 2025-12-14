@@ -4,6 +4,7 @@ export type Mix = PlaybackBundleVM["mix"];
 
 export type AudioEngineStatus =
   | "idle"
+  | "preroll"  // Pre-roll atmosphere playing while main tracks load
   | "loading"
   | "ready"
   | "playing"

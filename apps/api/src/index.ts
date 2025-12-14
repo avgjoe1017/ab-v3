@@ -30,7 +30,8 @@ app.get("/me/entitlement", async (c) => {
   // Mock user ID (same as in POST /sessions)
   // In real auth, extract from token
   // For MVP, checking "default-user" usage or null
-  const ent = await getEntitlement("default-user-id");
+  const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000000"; // Valid UUID for default user
+  const ent = await getEntitlement(DEFAULT_USER_ID);
   return c.json(ent);
 });
 
@@ -53,8 +54,34 @@ app.post("/sessions", async (c) => {
   }
 
   // Risk 3: Entitlements Must Be Enforced Server-Side Early
-  const userId = "default-user-id"; // Hardcoded for MVP
-  const entitlement = await getEntitlement(userId);
+  // Use a valid UUID for the default user (required by schema)
+  const DEFAULT_EMAIL = "default@example.com";
+  const userId = "00000000-0000-0000-0000-000000000000"; // Hardcoded default user UUID for MVP
+  
+  // Ensure default user exists (for foreign key constraint)
+  // Try to find by ID first, then by email if needed
+  let user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    // Check if user exists with this email but different ID
+    const existingByEmail = await prisma.user.findUnique({ where: { email: DEFAULT_EMAIL } });
+    if (existingByEmail) {
+      // If existing user has invalid UUID, use null (schema allows nullable)
+      // Otherwise use the existing user's ID
+      const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(existingByEmail.id);
+      user = isValidUUID ? existingByEmail : null;
+    } else {
+      // Create new user with the default UUID
+      user = await prisma.user.create({ 
+        data: { id: userId, email: DEFAULT_EMAIL } 
+      });
+    }
+  }
+  // Use null if user has invalid UUID (schema allows nullable)
+  const finalUserId = user && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id) 
+    ? user.id 
+    : null;
+  
+  const entitlement = await getEntitlement(finalUserId);
 
   if (!entitlement.canCreateSession) {
     return c.json(error("FREE_LIMIT_REACHED", "You have reached your daily limit of free sessions."), 403);
@@ -66,7 +93,7 @@ app.post("/sessions", async (c) => {
   const session = await prisma.session.create({
     data: {
       source: "user",
-      ownerUserId: userId, // Ensure we track ownership for quota
+      ownerUserId: finalUserId, // Ensure we track ownership for quota
       title: parsedBody.data.title,
       goalTag: parsedBody.data.goalTag,
       durationSec: undefined, // Infinite
@@ -87,11 +114,18 @@ app.post("/sessions", async (c) => {
 
   // Automatically trigger audio generation for "Auto-Generate" UX
   // This is an async operation, the client will poll /jobs/:id
-  const job = await createJob("ensure-audio", { sessionId: session.id });
-  triggerJobProcessing(job.id, processEnsureAudioJob);
+  try {
+    const job = await createJob("ensure-audio", { sessionId: session.id });
+    triggerJobProcessing(job.id, processEnsureAudioJob);
+  } catch (jobError) {
+    // Log but don't fail the session creation if job creation fails
+    console.error("[API] Failed to create audio generation job:", jobError);
+    // Continue - audio can be generated later via /ensure-audio endpoint
+  }
 
   // Return the new session (mapped to SessionV3)
-  const sessionV3 = SessionV3Schema.parse({
+  try {
+    const sessionV3 = SessionV3Schema.parse({
     schemaVersion: 3,
     id: session.id,
     ownerUserId: session.ownerUserId,
@@ -106,9 +140,13 @@ app.post("/sessions", async (c) => {
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
     audio: undefined // Not fully ready yet usually
-  });
-
-  return c.json(sessionV3, 201); // 201 Created
+    });
+    
+    return c.json(sessionV3, 201); // 201 Created
+  } catch (parseError) {
+    console.error("[API] Failed to parse SessionV3:", parseError);
+    return c.json(error("INTERNAL_ERROR", "Failed to serialize session response", parseError), 500);
+  }
 });
 
 app.get("/sessions/:id", async (c) => {
@@ -178,42 +216,105 @@ app.get("/jobs/:id", async (c) => {
 
 // ---- playback bundle ----
 app.get("/sessions/:id/playback-bundle", async (c) => {
-  const parsed = uuidParam.safeParse({ id: c.req.param("id") });
-  if (!parsed.success) return c.json(error("INVALID_SESSION_ID", "Session id must be a UUID", parsed.error.flatten()), 400);
+  try {
+    const parsed = uuidParam.safeParse({ id: c.req.param("id") });
+    if (!parsed.success) return c.json(error("INVALID_SESSION_ID", "Session id must be a UUID", parsed.error.flatten()), 400);
 
-  const session = await prisma.session.findUnique({
-    where: { id: parsed.data.id },
-    include: { audio: { include: { mergedAudioAsset: true } } }
-  });
+    const session = await prisma.session.findUnique({
+      where: { id: parsed.data.id },
+      include: { audio: { include: { mergedAudioAsset: true } } }
+    });
 
-  if (!session) return c.json(error("NOT_FOUND", "Session not found"), 404);
+    if (!session) return c.json(error("NOT_FOUND", "Session not found"), 404);
 
-  if (!session.audio) {
-    return c.json(error("AUDIO_NOT_READY", "Audio not generated", { sessionId: session.id }), 404);
-    // Client should see this error and call ensure-audio
+    if (!session.audio) {
+      return c.json(error("AUDIO_NOT_READY", "Audio not generated", { sessionId: session.id }), 404);
+      // Client should see this error and call ensure-audio
+    }
+
+    // V3 Compliance: Resolve real binaural/background assets
+    // Use request host to construct URLs that work for physical devices
+    const host = c.req.header("host") || "localhost:8787";
+    const protocol = c.req.header("x-forwarded-proto") || "http";
+    const apiBaseUrl = `${protocol}://${host}`;
+    
+    // Set API_BASE_URL env var temporarily for asset functions
+    const originalApiBaseUrl = process.env.API_BASE_URL;
+    process.env.API_BASE_URL = apiBaseUrl;
+    
+    const { getBinauralAsset, getBackgroundAsset } = await import("./services/audio/assets");
+    
+    // Get real asset URLs (platform-aware) with error handling
+    let binaural;
+    let background;
+    
+    try {
+      binaural = await getBinauralAsset(10); // Default to 10Hz alpha
+    } catch (binauralError: any) {
+      console.error("[API] Failed to get binaural asset:", binauralError);
+      process.env.API_BASE_URL = originalApiBaseUrl; // Restore
+      return c.json(error("ASSET_ERROR", `Binaural asset not available: ${binauralError.message}`, binauralError), 500);
+    }
+    
+    try {
+      background = await getBackgroundAsset(); // Default background
+    } catch (backgroundError: any) {
+      console.error("[API] Failed to get background asset:", backgroundError);
+      process.env.API_BASE_URL = originalApiBaseUrl; // Restore
+      return c.json(error("ASSET_ERROR", `Background asset not available: ${backgroundError.message}`, backgroundError), 500);
+    }
+    
+    // Restore original API_BASE_URL
+    process.env.API_BASE_URL = originalApiBaseUrl;
+    
+    // Construct affirmations URL (serve from storage)
+    if (!session.audio.mergedAudioAsset?.url) {
+      return c.json(error("ASSET_ERROR", "Merged audio asset URL not found"), 500);
+    }
+    
+    // File path is relative to apps/api, e.g., "storage/merged/file.mp3"
+    // Static server serves /storage/* from apps/api/, so we need to construct the URL correctly
+    const filePath = session.audio.mergedAudioAsset.url;
+    let affirmationsUrlRelative: string;
+    
+    // If path is absolute, make it relative to process.cwd() (apps/api)
+    if (path.isAbsolute(filePath)) {
+      const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+      // If relative path already starts with "storage", use it directly
+      affirmationsUrlRelative = relativePath.startsWith("storage/") 
+        ? `/${relativePath}` 
+        : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+    } else {
+      // Path is already relative, ensure it starts with /storage/
+      affirmationsUrlRelative = filePath.startsWith("storage/") 
+        ? `/${filePath}` 
+        : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+    }
+    
+    // Convert to absolute URL using request host (works for localhost, IP addresses, etc.)
+    const affirmationsUrl = affirmationsUrlRelative.startsWith("http") 
+      ? affirmationsUrlRelative 
+      : `${protocol}://${host}${affirmationsUrlRelative}`;
+
+    try {
+      const bundle = PlaybackBundleVMSchema.parse({
+        sessionId: session.id,
+        affirmationsMergedUrl: affirmationsUrl,
+        background,
+        binaural,
+        mix: { affirmations: 1, binaural: 0.6, background: 0.6 }, // Increased from 0.35 to 0.6 for better audibility
+        effectiveAffirmationSpacingMs: session.affirmationSpacingMs ?? 3000, // Default to 3s if null
+      });
+
+      return c.json({ bundle });
+    } catch (parseError: any) {
+      console.error("[API] Failed to parse PlaybackBundleVM:", parseError);
+      return c.json(error("VALIDATION_ERROR", "Failed to construct playback bundle", parseError), 500);
+    }
+  } catch (err: any) {
+    console.error("[API] Unexpected error in playback-bundle:", err);
+    return c.json(error("INTERNAL_ERROR", "Internal server error", err.message), 500);
   }
-
-  // V3 Compliance: Resolve real binaural/background assets
-  const { getBinauralAsset, getBackgroundAsset } = await import("./services/audio/assets");
-  
-  // Get real asset URLs (platform-aware)
-  const binaural = await getBinauralAsset(10); // Default to 10Hz alpha
-  const background = await getBackgroundAsset(); // Default background
-  
-  // Construct affirmations URL (serve from storage)
-  const affirmationsRelativePath = path.relative(process.cwd(), session.audio.mergedAudioAsset.url).replace(/\\/g, "/");
-  const affirmationsUrl = `${STORAGE_PUBLIC_BASE_URL}/${affirmationsRelativePath}`;
-
-  const bundle = PlaybackBundleVMSchema.parse({
-    sessionId: session.id,
-    affirmationsMergedUrl: affirmationsUrl,
-    background,
-    binaural,
-    mix: { affirmations: 1, binaural: 0.35, background: 0.35 },
-    effectiveAffirmationSpacingMs: session.affirmationSpacingMs ?? 3000, // Default to 3s if null
-  });
-
-  return c.json({ bundle });
 });
 
 export default app;
@@ -226,8 +327,9 @@ if (import.meta.main) {
   // Serve storage directory strictly for dev
   // In production, upload to S3.
   const { serveStatic } = await import("hono/bun");
+  const PROJECT_ROOT = path.resolve(process.cwd(), "..", ".."); // Go up from apps/api to project root
   app.use("/storage/*", serveStatic({ root: "./" })); // serves ./storage/...
-  app.use("/assets/*", serveStatic({ root: "./" })); // serves ./assets/... for audio files
+  app.use("/assets/*", serveStatic({ root: PROJECT_ROOT })); // serves project root assets/... for audio files
 
   Bun.serve({ port, fetch: app.fetch });
 }

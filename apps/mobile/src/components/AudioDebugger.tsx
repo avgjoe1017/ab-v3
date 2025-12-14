@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Button, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Button, StyleSheet, ActivityIndicator, Pressable } from "react-native";
 import { getAudioEngine } from "@ab/audio-engine";
 import type { AudioEngineSnapshot } from "@ab/audio-engine";
 import { PlaybackBundleVMSchema } from "@ab/contracts";
@@ -22,6 +22,7 @@ const DUMMY_BUNDLE = {
 
 export const AudioDebugger = () => {
     const [state, setState] = useState<AudioEngineSnapshot>(getAudioEngine().getState());
+    const [collapsed, setCollapsed] = useState(true); // Collapsed by default
 
     useEffect(() => {
         return getAudioEngine().subscribe(setState);
@@ -68,11 +69,31 @@ export const AudioDebugger = () => {
 };
 
 const styles = StyleSheet.create({
+    collapsedContainer: {
+        padding: 8,
+        backgroundColor: "#ddd",
+        borderBottomWidth: 1,
+        borderColor: "#ccc",
+    },
+    collapsedText: {
+        fontSize: 12,
+        color: "#666",
+    },
+    header: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 10,
+    },
+    collapseText: {
+        fontSize: 12,
+        color: "#666",
+    },
     container: {
-        padding: 20,
+        padding: 12,
         backgroundColor: "#eee",
-        borderRadius: 10,
-        margin: 20,
+        borderBottomWidth: 1,
+        borderColor: "#ccc",
     },
     title: {
         fontWeight: "bold",

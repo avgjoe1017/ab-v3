@@ -8,6 +8,7 @@ import { stitchAudioFiles } from "./stitching";
 import { CHUNKS_DIR, SILENCE_DURATIONS_MS } from "./constants";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { generateTTSAudio } from "./tts";
 const execFileAsync = promisify(execFile);
 
 // Temporary fix for simple imports if contracts export isn't fully set up with types in this context
@@ -92,21 +93,6 @@ export async function pregenerateSilenceChunks(): Promise<void> {
     console.log("✅ All silence chunks pre-generated");
 }
 
-// Helper to generate a beep (placeholder for affirmation) (Direct)
-async function generateBeepFile(filePath: string, durationSec: number = 2, freq: number = 440) {
-    if (!ffmpegStatic) throw new Error("ffmpeg-static not found");
-
-    await execFileAsync(ffmpegStatic, [
-        "-f", "lavfi",
-        "-i", `sine=f=${freq}:b=4`,
-        "-t", durationSec.toString(),
-        "-c:a", "libmp3lame",
-        "-b:a", "128k",
-        "-y",
-        filePath
-    ]);
-}
-
 export async function ensureAffirmationChunk(
     text: string,
     voiceId: string,
@@ -127,14 +113,25 @@ export async function ensureAffirmationChunk(
         return existing.url;
     }
 
-    // 3. Generate (Stub) using FFmpeg
+    // 3. Generate using TTS service (falls back to beep if TTS not configured)
     await ensureDirectory(CHUNKS_DIR);
 
     if (!(await fs.pathExists(filePath))) {
-        console.log(`Generating stub affirmation chunk (v${variant}): ${filename}`);
-        // Variant 1 = 440Hz, Variant 2 = 444Hz (Micro-variation simulation)
-        const freq = variant === 1 ? 440 : 444;
-        await generateBeepFile(filePath, 1.5, freq);
+        const provider = process.env.TTS_PROVIDER?.toLowerCase() || "beep";
+        console.log(`[TTS] Generating affirmation chunk (v${variant}) using provider: ${provider}`);
+        console.log(`[TTS] Text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+        try {
+            await generateTTSAudio(
+                { text, voiceId, pace, variant },
+                filePath
+            );
+            console.log(`[TTS] ✅ Audio generated successfully: ${filename}`);
+        } catch (error) {
+            console.error(`[TTS] ❌ Failed to generate audio for ${filename}:`, error);
+            throw error; // Re-throw to let caller handle
+        }
+    } else {
+        console.log(`[TTS] Using cached audio: ${filename}`);
     }
 
     // 4. Save to DB
@@ -178,7 +175,7 @@ export async function ensureSilence(durationMs: number): Promise<string> {
     }
 
     // Use the largest available chunk that fits
-    const useDuration = availableDurations[0];
+    const useDuration = availableDurations[0]!; // Safe: we checked length above
     const useHash = `silence_${useDuration}`;
     const useAsset = await prisma.audioAsset.findUnique({
         where: { kind_hash: { kind: "silence", hash: useHash } },
