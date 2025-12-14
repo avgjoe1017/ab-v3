@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Dimensions, ImageBackground, ScrollView } from "react-native";
+// @ts-expect-error - expo-linear-gradient types may not be available immediately after install
+import { LinearGradient } from "expo-linear-gradient";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "../lib/api";
-import { API_BASE_URL } from "../lib/config";
 import { PlaybackBundleVMSchema, type PlaybackBundleVM } from "@ab/contracts";
-import { getAudioEngine, type AudioEngineStatus, type AudioEngineSnapshot } from "@ab/audio-engine";
+import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
+import Slider from "@react-native-community/slider";
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 // Helper to format time in MM:SS
 function formatTime(ms: number): string {
@@ -15,28 +20,20 @@ function formatTime(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-// Helper to get status color
-function getStatusColor(status: AudioEngineStatus): { color: string } {
-  switch (status) {
-    case "playing":
-      return { color: "#10b981" }; // green
-    case "preroll":
-      return { color: "#f59e0b" }; // amber
-    case "loading":
-      return { color: "#3b82f6" }; // blue
-    case "paused":
-      return { color: "#6b7280" }; // gray
-    case "error":
-      return { color: "#ef4444" }; // red
-    default:
-      return { color: "#6b7280" }; // gray
-  }
-}
-
-export default function PlayerScreen({ route }: any) {
+export default function PlayerScreen({ route, navigation }: any) {
   const sessionId: string = route.params.sessionId;
   const queryClient = useQueryClient();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [mixPanelOpen, setMixPanelOpen] = useState(false);
+
+  // Fetch session details for title/metadata
+  const { data: sessionData } = useQuery({
+    queryKey: ["session", sessionId],
+    queryFn: async () => {
+      const res = await apiGet<any>(`/sessions/${sessionId}`);
+      return res;
+    },
+  });
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["playback-bundle", sessionId],
@@ -45,14 +42,13 @@ export default function PlayerScreen({ route }: any) {
         const json = await apiGet<{ bundle: PlaybackBundleVM }>(`/sessions/${sessionId}/playback-bundle`);
         return PlaybackBundleVMSchema.parse(json.bundle);
       } catch (err: any) {
-        // Check if error is "AUDIO_NOT_READY"
         if (err?.message?.includes("AUDIO_NOT_READY") || err?.message?.includes("Audio not generated")) {
           throw new Error("AUDIO_NOT_READY");
         }
         throw err;
       }
     },
-    retry: false, // Don't retry automatically
+    retry: false,
   });
 
   const handleGenerateAudio = async () => {
@@ -60,34 +56,30 @@ export default function PlayerScreen({ route }: any) {
     try {
       const response = await apiPost<{ status: string; jobId?: string }>(`/sessions/${sessionId}/ensure-audio`, {});
       
-      // If audio is already ready, refetch immediately
       if (response.status === "ready") {
         queryClient.invalidateQueries({ queryKey: ["playback-bundle", sessionId] });
         setIsGenerating(false);
         return;
       }
       
-      // If job was created, poll for completion
       if (response.jobId) {
         const pollJob = async () => {
           let attempts = 0;
-          const maxAttempts = 30; // 30 seconds max
+          const maxAttempts = 30;
           
           while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            await new Promise(resolve => setTimeout(resolve, 1000));
             
             try {
               const jobResponse = await apiGet<{ job: { status: string; error?: string } }>(`/jobs/${response.jobId}`);
               
               if (jobResponse.job.status === "completed") {
-                // Audio generated! Refetch bundle
                 queryClient.invalidateQueries({ queryKey: ["playback-bundle", sessionId] });
                 setIsGenerating(false);
                 return;
               } else if (jobResponse.job.status === "failed") {
                 throw new Error(jobResponse.job.error || "Audio generation failed");
               }
-              // Otherwise, keep polling (status is "pending" or "processing")
             } catch (err) {
               console.error("Error polling job:", err);
             }
@@ -95,7 +87,6 @@ export default function PlayerScreen({ route }: any) {
             attempts++;
           }
           
-          // Timeout - but still try to refetch in case it completed
           setIsGenerating(false);
           queryClient.invalidateQueries({ queryKey: ["playback-bundle", sessionId] });
         };
@@ -121,9 +112,6 @@ export default function PlayerScreen({ route }: any) {
   const durationMs = snapshot.durationMs;
   const mix = snapshot.mix;
 
-  // Calculate progress percentage (0-100)
-  const progress = durationMs > 0 ? (positionMs / durationMs) * 100 : 0;
-
   // Auto-load and auto-play when bundle data is available
   useEffect(() => {
     if (!data) return;
@@ -131,10 +119,9 @@ export default function PlayerScreen({ route }: any) {
     const currentSessionId = data.sessionId;
     const isNewSession = lastLoadedSessionId !== currentSessionId;
     const isDifferentSession = snapshot.sessionId !== currentSessionId;
-    const needsLoad = isNewSession || isDifferentSession || status === "idle";
+    
+    const needsLoad = isNewSession || isDifferentSession;
 
-    // If it's a new/different session or we're idle, load it
-    // AudioEngine.load() will handle stopping current session if needed
     if (needsLoad) {
       console.log("[PlayerScreen] Auto-loading session:", currentSessionId);
       engine.load(data).then(() => {
@@ -143,11 +130,14 @@ export default function PlayerScreen({ route }: any) {
       }).catch((error) => {
         console.error("[PlayerScreen] Auto-load failed:", error);
       });
+      return;
     }
     
-    // Auto-play when bundle is ready (and it's the current session)
-    if (status === "ready" && snapshot.sessionId === currentSessionId) {
-      // Small delay to ensure everything is set up
+    if (status === "ready" && 
+        snapshot.sessionId === currentSessionId && 
+        lastLoadedSessionId === currentSessionId &&
+        snapshot.status !== "playing" &&
+        snapshot.status !== "preroll") {
       const timer = setTimeout(() => {
         console.log("[PlayerScreen] Auto-playing session:", currentSessionId);
         engine.play().catch((error) => {
@@ -156,185 +146,209 @@ export default function PlayerScreen({ route }: any) {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [data, status, engine, lastLoadedSessionId, snapshot.sessionId]);
+  }, [data, status, engine, lastLoadedSessionId, snapshot.sessionId, snapshot.status]);
+
+  const sessionTitle = sessionData?.title || "Deep Rest";
+  const isPlaying = status === "playing" || status === "preroll";
+  const isPaused = status === "paused";
+  const canPlay = status === "ready" || status === "paused" || status === "idle";
+
+  // Audio visualization bars (heights matching HTML)
+  const barHeights = [16, 24, 32, 20, 40, 48, 28, 56, 36, 20, 32, 48, 64, 40, 24, 32, 48, 64, 32, 40, 24, 16, 32, 48, 28, 20, 36, 44, 24, 16];
+  const activeBars = 16; // First 16 bars are active (primary color), rest are muted
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Player</Text>
-      <Text style={styles.sessionId}>Session: {sessionId}</Text>
-      
-      {/* Status Display */}
-      <View style={styles.statusContainer}>
-        <Text style={styles.statusLabel}>Status:</Text>
-        <Text style={[styles.statusText, getStatusColor(status)]}>
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </Text>
-      </View>
+      <ImageBackground
+        source={{ uri: "https://lh3.googleusercontent.com/aida-public/AB6AXuCiGU0Pe_rpmK1biRM98ucc4iM-UpR76i7FaWn5kk5xx9G5FbweSQtV1zfVoHljz-EP2bfL-hqYtUMx5NcmcN1gpMksiJa-ziPi_ErpGMf1-cBAm28bl9rGsCiTFteAfYyvZ7_dx0QA27WalRfTi2A8DSUF-t1bSmH86cxvNScFMmyfEe6g8Crpew3IGTA8wGi5wtTb3S7VIpvM63EoaLyPsWV4BuHSAKZ7i7F4Wa4iKhb7F7Tj12mF-RxFnx9HvhwqgIA13ZlMDrc" }}
+        style={styles.backgroundImage}
+        imageStyle={styles.backgroundImageStyle}
+      >
+        <LinearGradient
+          colors={["rgba(67, 56, 202, 0.4)", "rgba(88, 28, 135, 0.4)", "rgba(30, 58, 138, 0.6)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={["transparent", "rgba(15, 23, 42, 0.2)", "rgba(15, 23, 42, 0.9)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </ImageBackground>
 
-      {/* Progress Bar and Time Display */}
-      {(status === "playing" || status === "paused" || status === "preroll") && durationMs > 0 && (
-        <View style={styles.progressContainer}>
-          <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${Math.min(100, Math.max(0, progress))}%` }]} />
-          </View>
-          <View style={styles.timeContainer}>
-            <Text style={styles.timeText}>{formatTime(positionMs)}</Text>
-            <Text style={styles.timeText}>{formatTime(durationMs)}</Text>
-          </View>
+      <View style={styles.content}>
+        {/* Top Navigation */}
+        <View style={styles.topNav}>
+          <Pressable 
+            style={styles.topNavButton}
+            onPress={() => navigation.goBack()}
+          >
+            <MaterialIcons name="arrow-back" size={24} color="#fff" />
+          </Pressable>
+          <Pressable style={styles.topNavButton}>
+            <MaterialIcons name="more-horiz" size={24} color="#fff" />
+          </Pressable>
         </View>
-      )}
 
-      {/* Loading State */}
-      {isLoading && (
-        <View style={styles.messageContainer}>
-          <Text style={styles.messageText}>Loading bundle...</Text>
-        </View>
-      )}
+        <View style={styles.spacer} />
 
-      {/* Error Display with Better UI */}
-      {error && (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorTitle}>Failed to load bundle</Text>
-          <Text style={styles.errorMessage}>
-            {error instanceof Error ? error.message : String(error)}
-          </Text>
-          {error instanceof Error && error.message.includes("AUDIO_NOT_READY") && (
-            <View style={styles.errorActionContainer}>
-              <Text style={styles.errorActionText}>
-                Audio hasn't been generated yet. Tap below to generate it.
-              </Text>
-              <Pressable
-                onPress={handleGenerateAudio}
-                disabled={isGenerating}
+        {/* Main Content Card */}
+        <View style={styles.mainCard}>
+          <View style={styles.mainCardHeader}>
+            <Text style={styles.sessionTitle}>{sessionTitle}</Text>
+            <Text style={styles.sessionSubtitle}>Delta 2Hz · 30 min</Text>
+          </View>
+
+          {/* Audio Visualization */}
+          <View style={styles.audioVizContainer}>
+            {barHeights.map((height, index) => (
+              <View
+                key={index}
                 style={[
-                  styles.generateButton,
-                  { opacity: isGenerating ? 0.6 : 1, backgroundColor: isGenerating ? "#9ca3af" : "#3b82f6" }
+                  styles.audioBar,
+                  { 
+                    height,
+                    backgroundColor: index < activeBars ? "#FDE047" : "rgba(255, 255, 255, 0.3)"
+                  }
                 ]}
-              >
-                <Text style={styles.generateButtonText}>
-                  {isGenerating ? "Generating Audio..." : "Generate Audio"}
-                </Text>
-              </Pressable>
+              />
+            ))}
+          </View>
+
+          {/* Time Display */}
+          <View style={styles.timeDisplay}>
+            <Text style={styles.timeLabel}>Session Focus</Text>
+            <Text style={styles.timeValue}>
+              {formatTime(positionMs)} / {formatTime(durationMs)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Playback Controls */}
+        <View style={styles.controlsCard}>
+          <Pressable style={styles.controlButton}>
+            <MaterialIcons name="skip-previous" size={36} color="#fff" />
+          </Pressable>
+          <Pressable
+            style={styles.playButton}
+            onPress={() => {
+              if (isPlaying) {
+                engine.pause();
+              } else if (canPlay) {
+                engine.play();
+              }
+            }}
+          >
+            <MaterialIcons 
+              name={isPlaying ? "pause" : "play-arrow"} 
+              size={36} 
+              color="#0f172a" 
+            />
+          </Pressable>
+          <Pressable style={styles.controlButton}>
+            <MaterialIcons name="skip-next" size={36} color="#fff" />
+          </Pressable>
+        </View>
+
+        {/* Mix Audio Panel */}
+        <View style={[styles.mixPanel, mixPanelOpen && styles.mixPanelOpen]}>
+          <Pressable
+            style={styles.mixPanelHeader}
+            onPress={() => setMixPanelOpen(!mixPanelOpen)}
+          >
+            <View style={styles.mixPanelHeaderLeft}>
+              <MaterialIcons name="tune" size={24} color="#FDE047" />
+              <Text style={styles.mixPanelTitle}>Mix Audio</Text>
+            </View>
+            <MaterialIcons 
+              name={mixPanelOpen ? "expand-more" : "expand-less"} 
+              size={24} 
+              color="#fff" 
+            />
+          </Pressable>
+          
+          {mixPanelOpen && (
+            <View style={styles.mixControls}>
+              {/* Affirmations */}
+              <View style={styles.mixControl}>
+                <View style={styles.mixControlHeader}>
+                  <Text style={styles.mixControlLabel}>Affirmations</Text>
+                  <Text style={styles.mixControlValue}>{Math.round(mix.affirmations * 100)}%</Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={100}
+                  value={mix.affirmations * 100}
+                  onValueChange={(value) => engine.setMix({ ...mix, affirmations: value / 100 })}
+                  minimumTrackTintColor="#FDE047"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                  thumbTintColor="#FDE047"
+                />
+              </View>
+
+              {/* Binaural */}
+              <View style={styles.mixControl}>
+                <View style={styles.mixControlHeader}>
+                  <Text style={styles.mixControlLabel}>Binaural Frequency</Text>
+                  <Text style={styles.mixControlValue}>{Math.round(mix.binaural * 100)}%</Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={100}
+                  value={mix.binaural * 100}
+                  onValueChange={(value) => engine.setMix({ ...mix, binaural: value / 100 })}
+                  minimumTrackTintColor="#FDE047"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                  thumbTintColor="#FDE047"
+                />
+              </View>
+
+              {/* Atmosphere */}
+              <View style={styles.mixControl}>
+                <View style={styles.mixControlHeader}>
+                  <Text style={styles.mixControlLabel}>Atmosphere</Text>
+                  <Text style={styles.mixControlValue}>{Math.round(mix.background * 100)}%</Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={100}
+                  value={mix.background * 100}
+                  onValueChange={(value) => engine.setMix({ ...mix, background: value / 100 })}
+                  minimumTrackTintColor="#FDE047"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                  thumbTintColor="#FDE047"
+                />
+              </View>
             </View>
           )}
         </View>
-      )}
-
-      {/* Control Buttons */}
-      <View style={styles.controlsContainer}>
-        <Pressable
-          disabled={!data || status === "loading"}
-          onPress={async () => {
-            if (!data) return;
-            try {
-              console.log("[PlayerScreen] Loading bundle...");
-              await engine.load(data);
-              console.log("[PlayerScreen] Bundle loaded successfully");
-            } catch (error) {
-              console.error("[PlayerScreen] Failed to load bundle:", error);
-              alert(`Failed to load bundle: ${error}`);
-            }
-          }}
-          style={[styles.button, { opacity: (!data || status === "loading") ? 0.5 : 1 }]}
-        >
-          <Text style={styles.buttonText}>{status === "loading" ? "Loading..." : "Load"}</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => {
-            // Only allow play if we have a bundle loaded or if we're in a valid state
-            if (data || status === "ready" || status === "paused" || status === "idle") {
-              engine.play();
-            }
-          }}
-          disabled={status === "playing" || status === "preroll" || (!data && status !== "idle")}
-          style={[
-            styles.button,
-            styles.playButton,
-            { opacity: (status === "playing" || status === "preroll" || (!data && status !== "idle")) ? 0.5 : 1 }
-          ]}
-        >
-          <Text style={[styles.buttonText, styles.playButtonText]}>Play</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => engine.pause()}
-          disabled={status !== "playing" && status !== "preroll"}
-          style={[styles.button, { opacity: (status !== "playing" && status !== "preroll") ? 0.5 : 1 }]}
-        >
-          <Text style={styles.buttonText}>Pause</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => engine.stop()}
-          disabled={status === "idle"}
-          style={[styles.button, { opacity: status === "idle" ? 0.5 : 1 }]}
-        >
-          <Text style={styles.buttonText}>Stop</Text>
-        </Pressable>
       </View>
 
-      {/* Volume Controls */}
-      {data && (status === "ready" || status === "playing" || status === "paused") && (
-        <View style={styles.volumeContainer}>
-          <Text style={styles.volumeTitle}>Volume Controls</Text>
-          
-          <View style={styles.volumeRow}>
-            <Text style={styles.volumeLabel}>Affirmations</Text>
-            <View style={styles.volumeControls}>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, affirmations: Math.max(0, mix.affirmations - 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>-</Text>
-              </Pressable>
-              <Text style={styles.volumeValue}>{Math.round(mix.affirmations * 100)}%</Text>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, affirmations: Math.min(1, mix.affirmations + 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>+</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <View style={styles.volumeRow}>
-            <Text style={styles.volumeLabel}>Binaural</Text>
-            <View style={styles.volumeControls}>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, binaural: Math.max(0, mix.binaural - 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>-</Text>
-              </Pressable>
-              <Text style={styles.volumeValue}>{Math.round(mix.binaural * 100)}%</Text>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, binaural: Math.min(1, mix.binaural + 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>+</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <View style={styles.volumeRow}>
-            <Text style={styles.volumeLabel}>Background</Text>
-            <View style={styles.volumeControls}>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, background: Math.max(0, mix.background - 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>-</Text>
-              </Pressable>
-              <Text style={styles.volumeValue}>{Math.round(mix.background * 100)}%</Text>
-              <Pressable
-                onPress={() => engine.setMix({ ...mix, background: Math.min(1, mix.background + 0.1) })}
-                style={styles.volumeButton}
-              >
-                <Text style={styles.volumeButtonText}>+</Text>
-              </Pressable>
-            </View>
-          </View>
+      {/* Error Display */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Audio Not Ready</Text>
+          <Text style={styles.errorMessage}>
+            {error instanceof Error && error.message.includes("AUDIO_NOT_READY") 
+              ? "Audio hasn't been generated yet."
+              : error instanceof Error ? error.message : String(error)}
+          </Text>
+          {error instanceof Error && error.message.includes("AUDIO_NOT_READY") && (
+            <Pressable
+              onPress={handleGenerateAudio}
+              disabled={isGenerating}
+              style={[styles.generateButton, isGenerating && styles.generateButtonDisabled]}
+            >
+              <Text style={styles.generateButtonText}>
+                {isGenerating ? "Generating..." : "Generate Audio"}
+              </Text>
+            </Pressable>
+          )}
         </View>
       )}
     </View>
@@ -344,175 +358,221 @@ export default function PlayerScreen({ route }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    gap: 12,
-    backgroundColor: "#fff",
+    width: "100%",
+    maxWidth: SCREEN_WIDTH,
+    height: 850,
+    overflow: "hidden",
+    borderRadius: 40,
+    backgroundColor: "#1e293b",
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "600",
-    marginBottom: 8,
+  backgroundImage: {
+    position: "absolute",
+    inset: 0,
+    opacity: 0.8,
   },
-  sessionId: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginBottom: 8,
+  backgroundImageStyle: {
+    resizeMode: "cover",
   },
-  statusContainer: {
+  content: {
+    flex: 1,
+    padding: 24,
+    paddingTop: 48,
+    paddingBottom: 32,
+    justifyContent: "space-between",
+    zIndex: 10,
+  },
+  topNav: {
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: 8,
     marginBottom: 16,
   },
-  statusLabel: {
-    fontSize: 14,
-    color: "#6b7280",
+  topNavButton: {
+    padding: 12,
+    borderRadius: 9999,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
-  statusText: {
-    fontSize: 14,
-    fontWeight: "600",
+  spacer: {
+    flexGrow: 1,
   },
-  progressContainer: {
+  mainCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 24,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+  },
+  mainCardHeader: {
     marginBottom: 24,
   },
-  progressBarContainer: {
-    height: 4,
-    backgroundColor: "#e5e7eb",
-    borderRadius: 2,
-    overflow: "hidden",
-    marginBottom: 8,
+  sessionTitle: {
+    fontSize: 30,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+    marginBottom: 4,
+    color: "#fff",
   },
-  progressBar: {
-    height: "100%",
-    backgroundColor: "#3b82f6",
-    borderRadius: 2,
-  },
-  timeContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  timeText: {
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  button: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 8,
-    backgroundColor: "#f9fafb",
-    marginBottom: 8,
-  },
-  buttonText: {
-    textAlign: "center",
-    fontSize: 16,
+  sessionSubtitle: {
+    color: "rgba(147, 197, 253, 1)",
+    fontSize: 18,
+    opacity: 0.8,
     fontWeight: "500",
   },
-  volumeContainer: {
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: "#f9fafb",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  volumeTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 12,
-  },
-  volumeRow: {
+  audioVizContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    height: 64,
+    marginBottom: 24,
+    paddingHorizontal: 4,
+    gap: 2,
   },
-  volumeLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    flex: 1,
+  audioBar: {
+    width: 4,
+    borderRadius: 9999,
   },
-  volumeControls: {
+  timeDisplay: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  timeLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 2,
+    color: "rgba(191, 219, 254, 1)",
+    textTransform: "uppercase",
+    opacity: 0.7,
+  },
+  timeValue: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 2,
+    color: "rgba(191, 219, 254, 1)",
+    textTransform: "uppercase",
+    opacity: 0.7,
+  },
+  controlsCard: {
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 32,
+    padding: 16,
+    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+  },
+  controlButton: {
+    padding: 16,
+  },
+  playButton: {
+    width: 80,
+    height: 80,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FDE047",
+    borderRadius: 40,
+    shadowColor: "#FDE047",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  mixPanel: {
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+  },
+  mixPanelOpen: {
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+  },
+  mixPanelHeader: {
+    width: "100%",
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  mixPanelHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  volumeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    justifyContent: "center",
+  mixPanelTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  mixControls: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 8,
+    gap: 24,
+  },
+  mixControl: {
+    gap: 8,
+  },
+  mixControlHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
   },
-  volumeButtonText: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#3b82f6",
-  },
-  volumeValue: {
+  mixControlLabel: {
     fontSize: 14,
     fontWeight: "500",
-    minWidth: 40,
-    textAlign: "center",
+    color: "rgba(191, 219, 254, 1)",
   },
-  messageContainer: {
-    padding: 12,
-    backgroundColor: "#f3f4f6",
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  messageText: {
-    color: "#374151",
+  mixControlValue: {
     fontSize: 14,
+    fontWeight: "500",
+    color: "rgba(191, 219, 254, 1)",
+    opacity: 0.7,
+  },
+  slider: {
+    width: "100%",
+    height: 40,
   },
   errorContainer: {
-    padding: 16,
+    position: "absolute",
+    top: 100,
+    left: 24,
+    right: 24,
     backgroundColor: "#fee2e2",
-    borderRadius: 8,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
     borderColor: "#fca5a5",
-    marginBottom: 12,
+    zIndex: 100,
   },
   errorTitle: {
-    color: "#991b1b",
-    fontWeight: "600",
     fontSize: 16,
+    fontWeight: "600",
+    color: "#991b1b",
     marginBottom: 8,
   },
   errorMessage: {
-    color: "#991b1b",
     fontSize: 14,
-    marginBottom: 12,
-  },
-  errorActionContainer: {
-    marginTop: 8,
-  },
-  errorActionText: {
     color: "#991b1b",
-    fontSize: 12,
     marginBottom: 12,
   },
   generateButton: {
-    padding: 12,
+    backgroundColor: "#000",
     borderRadius: 8,
+    padding: 12,
+    alignItems: "center",
+  },
+  generateButtonDisabled: {
+    backgroundColor: "#9ca3af",
+    opacity: 0.6,
   },
   generateButtonText: {
     color: "#fff",
-    textAlign: "center",
-    fontWeight: "600",
     fontSize: 14,
-  },
-  controlsContainer: {
-    gap: 8,
-  },
-  playButton: {
-    backgroundColor: "#3b82f6",
-    borderColor: "#2563eb",
-  },
-  playButtonText: {
-    color: "#fff",
+    fontWeight: "600",
   },
 });

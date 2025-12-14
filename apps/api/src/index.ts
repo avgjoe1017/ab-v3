@@ -302,7 +302,7 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
         affirmationsMergedUrl: affirmationsUrl,
         background,
         binaural,
-        mix: { affirmations: 1, binaural: 0.6, background: 0.6 }, // Increased from 0.35 to 0.6 for better audibility
+        mix: { affirmations: 1, binaural: 0.3, background: 0.3 }, // Default to 30% for binaural and background
         effectiveAffirmationSpacingMs: session.affirmationSpacingMs ?? 3000, // Default to 3s if null
       });
 
@@ -329,7 +329,67 @@ if (import.meta.main) {
   const { serveStatic } = await import("hono/bun");
   const PROJECT_ROOT = path.resolve(process.cwd(), "..", ".."); // Go up from apps/api to project root
   app.use("/storage/*", serveStatic({ root: "./" })); // serves ./storage/...
-  app.use("/assets/*", serveStatic({ root: PROJECT_ROOT })); // serves project root assets/... for audio files
+  
+  // Custom handler for /assets/* with Range request support (required for iOS .m4a streaming)
+  // Bun's serveStatic doesn't support Range requests, so we implement it manually
+  app.use("/assets/*", async (c) => {
+    const url = new URL(c.req.url);
+    // Decode URL-encoded path segments (e.g., "Babbling%20Brook.m4a" -> "Babbling Brook.m4a")
+    const requestPath = decodeURIComponent(url.pathname.replace("/assets/", ""));
+    const filePath = path.resolve(PROJECT_ROOT, "assets", requestPath);
+    
+    try {
+      const file = Bun.file(filePath);
+      const exists = await file.exists();
+      
+      if (!exists) {
+        return c.notFound();
+      }
+      
+      const stats = await file.stat();
+      const fileSize = stats.size;
+      const range = c.req.header("range");
+      
+      // Set proper Content-Type for .m4a files
+      if (filePath.endsWith(".m4a")) {
+        c.header("Content-Type", "audio/mp4");
+      }
+      
+      // Support Range requests (required for iOS AVPlayer)
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+        
+        // Validate range
+        if (start >= fileSize || end >= fileSize || start > end) {
+          c.status(416); // Range Not Satisfiable
+          c.header("Content-Range", `bytes */${fileSize}`);
+          return c.body(null);
+        }
+        
+        // Return 206 Partial Content with Range headers
+        c.status(206);
+        c.header("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        c.header("Content-Length", chunkSize.toString());
+        c.header("Accept-Ranges", "bytes");
+        
+        // Read and stream the chunk
+        const fileHandle = await Bun.file(filePath).arrayBuffer();
+        const chunk = fileHandle.slice(start, end + 1);
+        return c.body(chunk);
+      } else {
+        // No Range header - return full file
+        c.header("Content-Length", fileSize.toString());
+        c.header("Accept-Ranges", "bytes");
+        return c.body(file);
+      }
+    } catch (error) {
+      console.error("[API] Error serving asset:", error);
+      return c.text("Internal Server Error", 500);
+    }
+  });
 
   Bun.serve({ port, fetch: app.fetch });
 }

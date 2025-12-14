@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Entrain - Explore Tab</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300;400;500;600;700&amp;family=Noto+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#e619e5",
+              "background-light": "#f8f6f8",
+              "background-dark": "#211121",
+              "surface-dark": "#2d1b2d",
+              "surface-highlight": "#3a253a",
+            },
+            fontFamily: {
+              "display": ["Spline Sans", "Noto Sans", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "1.5rem", "xl": "2rem", "2xl": "2.5rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-white antialiased overflow-x-hidden">
+<div class="relative flex h-full min-h-screen w-full flex-col max-w-md mx-auto bg-background-light dark:bg-background-dark shadow-2xl overflow-hidden pb-24">
+<!-- Header -->
+<header class="flex flex-col px-6 pt-12 pb-4 sticky top-0 z-20 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md">
+<div class="flex items-center justify-between mb-4">
+<h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Explore</h1>
+<button class="relative rounded-full h-10 w-10 flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-gray-900 dark:text-white" style="font-size: 28px;">account_circle</span>
+</button>
+</div>
+<!-- Search Bar -->
+<div class="relative w-full">
+<div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+<span class="material-symbols-outlined text-gray-400" style="font-size: 20px;">search</span>
+</div>
+<input class="block w-full p-3.5 pl-11 text-sm text-gray-900 bg-white dark:bg-surface-dark border-none rounded-full placeholder-gray-400 focus:ring-2 focus:ring-primary focus:outline-none shadow-sm dark:text-white transition-all" placeholder="Search sessions, goals, or moods..." type="text"/>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 flex flex-col gap-6 overflow-y-auto">
+<!-- Tag Filters -->
+<div class="w-full overflow-x-auto no-scrollbar pl-6 pr-2">
+<div class="flex gap-3 pb-2">
+<button class="flex h-10 shrink-0 items-center justify-center px-6 rounded-full bg-primary text-white shadow-lg shadow-primary/25 transition-transform active:scale-95">
+<span class="text-sm font-semibold">All</span>
+</button>
+<button class="flex h-10 shrink-0 items-center justify-center px-6 rounded-full bg-white dark:bg-surface-dark border border-gray-100 dark:border-white/5 text-gray-600 dark:text-gray-300 transition-transform active:scale-95 hover:bg-gray-50 dark:hover:bg-surface-highlight">
+<span class="text-sm font-medium">Sleep</span>
+</button>
+<button class="flex h-10 shrink-0 items-center justify-center px-6 rounded-full bg-white dark:bg-surface-dark border border-gray-100 dark:border-white/5 text-gray-600 dark:text-gray-300 transition-transform active:scale-95 hover:bg-gray-50 dark:hover:bg-surface-highlight">
+<span class="text-sm font-medium">Focus</span>
+</button>
+<button class="flex h-10 shrink-0 items-center justify-center px-6 rounded-full bg-white dark:bg-surface-dark border border-gray-100 dark:border-white/5 text-gray-600 dark:text-gray-300 transition-transform active:scale-95 hover:bg-gray-50 dark:hover:bg-surface-highlight">
+<span class="text-sm font-medium">Anxiety</span>
+</button>
+<button class="flex h-10 shrink-0 items-center justify-center px-6 rounded-full bg-white dark:bg-surface-dark border border-gray-100 dark:border-white/5 text-gray-600 dark:text-gray-300 transition-transform active:scale-95 hover:bg-gray-50 dark:hover:bg-surface-highlight">
+<span class="text-sm font-medium">Relaxation</span>
+</button>
+</div>
+</div>
+<!-- Featured / Hero Section -->
+<section class="px-6">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-lg font-bold text-gray-900 dark:text-white">Daily Pick</h3>
+</div>
+<div class="group relative w-full aspect-[4/3] rounded-2xl overflow-hidden shadow-lg transition-all hover:shadow-primary/20">
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent z-10"></div>
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105" data-alt="Abstract purple liquid waves gradient" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDQqSr_HJ3nAzF88zmaXlz06Ir36ZoNtTfa7mDH_CkL9FTRM9DUM5oyxvJsMNuPyunGaW6nGDPLtBINx22-VIjEUaPHimmslXwj8fQAZK-Ik0d3eBE7w8L2VBujIX_1QNuy9thsvoxDYNtXssTO7t_yNS4Hk0F1bfc7sjcF-JuDzwnKTS1FTintuA8rz_4cs98k9J2DItXujO90llSxwyHCobpn4Vrnw5-PR1V8U27p1u9sun8gK3pgE73JBMU3LhBP7JCAeIhoFUk");'></div>
+<div class="absolute bottom-0 left-0 w-full p-5 z-20 flex flex-col items-start gap-2">
+<div class="flex gap-2 mb-1">
+<span class="px-2 py-1 text-xs font-bold uppercase tracking-wider text-white bg-primary rounded-md">Deep Focus</span>
+<span class="px-2 py-1 text-xs font-medium bg-black/40 backdrop-blur-sm text-white rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined" style="font-size: 14px;">schedule</span> 45 min
+                            </span>
+</div>
+<h2 class="text-2xl font-bold leading-tight text-white">Theta Waves for Clarity</h2>
+<p class="text-gray-300 text-sm line-clamp-2">Enhanced concentration through low-frequency binaural beats. Perfect for studying or deep work.</p>
+<button class="mt-2 flex items-center justify-center gap-2 h-10 w-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full text-white text-sm font-semibold transition-colors">
+<span class="material-symbols-outlined fill-1" style="font-size: 20px;">play_arrow</span>
+                            Play Session
+                        </button>
+</div>
+</div>
+</section>
+<!-- Recommended Horizontal Scroll -->
+<section class="pt-2">
+<div class="px-6 flex items-center justify-between mb-3">
+<h3 class="text-lg font-bold text-gray-900 dark:text-white">Recommended for You</h3>
+<a class="text-sm font-medium text-primary hover:text-primary/80" href="#">See All</a>
+</div>
+<div class="w-full overflow-x-auto no-scrollbar pl-6 pr-6 pb-4">
+<div class="flex gap-4">
+<!-- Card 1 -->
+<div class="flex-none w-40 flex flex-col gap-2 group cursor-pointer">
+<div class="relative w-40 h-40 rounded-2xl overflow-hidden bg-surface-dark">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110" data-alt="Soft pink and blue gradient clouds" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuA8yPHYCruhABE5oYlV1ytxHgTssXRbR5S2456W78kCIUIM7YfS8BO4jz0T6njQEflUjyw1WTZ70bmopy-6cNscj8oDsWYReKncbKuxt26OZGvvS-ItpO5Y4NYujzR1wrovu8l4JqExoUb0CR_X8fx4sM4csuoPIAgxozbHA_SSew4aJTSZLTKAfIueoB8ULbgMraTv7CfY1Kb-rwnP0eC3ROFfMYxSQmCE5zlZ0havIqCHbkXHhuS-PrDSTLlbk8DMY4AzNb8Y41E");'></div>
+<div class="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors"></div>
+<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center shadow-lg">
+<span class="material-symbols-outlined text-white fill-1">play_arrow</span>
+</div>
+</div>
+</div>
+<div>
+<h4 class="text-base font-semibold text-gray-900 dark:text-white leading-tight">Lucid Dreaming</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">30 min • Sleep</p>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="flex-none w-40 flex flex-col gap-2 group cursor-pointer">
+<div class="relative w-40 h-40 rounded-2xl overflow-hidden bg-surface-dark">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110" data-alt="Dark blue abstract geometric shapes" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCDKWGGoKMp_T7PRXRQNfS-d6Q7AtHN-0tMluyqg3V1yiPcnJVdC3OQEJiutYSYpZYaSeBhxpz3mYwKBdROgNC71-WzshT4gSbpkizh5279DWxN8bES0Qkg1yffIJuZPRu13r6xRKOCH0pPkoiC1aDcnhGbOQYhpO3y5wYD9_MCl1C-OHGGwign3FG-iT_1rrUmL-_nhASPlsYoXfxYze7CAsVqVgnvCvvSkgNVja4U6a_UrSY_NYpD-gAJb5Zx8j8rkZgGXg6GVQM");'></div>
+<div class="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors"></div>
+<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center shadow-lg">
+<span class="material-symbols-outlined text-white fill-1">play_arrow</span>
+</div>
+</div>
+</div>
+<div>
+<h4 class="text-base font-semibold text-gray-900 dark:text-white leading-tight">Anxiety Release</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">15 min • Healing</p>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="flex-none w-40 flex flex-col gap-2 group cursor-pointer">
+<div class="relative w-40 h-40 rounded-2xl overflow-hidden bg-surface-dark">
+<div class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110" data-alt="Neon light reflections on water" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBFwzv0irj6uGhHK0mBqaU7ulcFttvCNXD4dk_oS9-b3P_jqyP2fqsZwmXZo8TlJawRpvxh2saxqhnsU9gu-MmtL6HE5ePLnD2tXdQWbmLxQR68HxCvp0kxWh6wNOC1MIawPR2ANZl3Amhpcqfouk8tqzgWyAb2rhEbLS62KhxUeCBlXpW9l3M6YwZUiMp_EFIiJbyGoHI3sqdCPG-c6CemtM2XpsDLQYnk-Xa5zxfzsUjeDjtcRDF61SGKmfsNpsdvRWNZ8JpXAQI");'></div>
+<div class="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors"></div>
+<div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center shadow-lg">
+<span class="material-symbols-outlined text-white fill-1">play_arrow</span>
+</div>
+</div>
+</div>
+<div>
+<h4 class="text-base font-semibold text-gray-900 dark:text-white leading-tight">Deep Work</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">60 min • Focus</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Browse By Goal Grid -->
+<section class="px-6 pb-6">
+<h3 class="text-lg font-bold text-gray-900 dark:text-white mb-4">Browse by Goal</h3>
+<div class="grid grid-cols-2 gap-4">
+<!-- Goal Card 1 -->
+<div class="bg-white dark:bg-surface-dark p-4 rounded-xl flex flex-col gap-3 shadow-sm dark:shadow-none hover:bg-gray-50 dark:hover:bg-surface-highlight transition-colors cursor-pointer border border-gray-100 dark:border-white/5">
+<div class="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-blue-400">bedtime</span>
+</div>
+<div>
+<h4 class="font-bold text-gray-900 dark:text-white">Sleep Better</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400">Delta waves</p>
+</div>
+</div>
+<!-- Goal Card 2 -->
+<div class="bg-white dark:bg-surface-dark p-4 rounded-xl flex flex-col gap-3 shadow-sm dark:shadow-none hover:bg-gray-50 dark:hover:bg-surface-highlight transition-colors cursor-pointer border border-gray-100 dark:border-white/5">
+<div class="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-purple-400">psychology</span>
+</div>
+<div>
+<h4 class="font-bold text-gray-900 dark:text-white">Focus</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400">Alpha waves</p>
+</div>
+</div>
+<!-- Goal Card 3 -->
+<div class="bg-white dark:bg-surface-dark p-4 rounded-xl flex flex-col gap-3 shadow-sm dark:shadow-none hover:bg-gray-50 dark:hover:bg-surface-highlight transition-colors cursor-pointer border border-gray-100 dark:border-white/5">
+<div class="h-10 w-10 rounded-full bg-teal-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-teal-400">self_improvement</span>
+</div>
+<div>
+<h4 class="font-bold text-gray-900 dark:text-white">Reduce Anxiety</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400">Theta waves</p>
+</div>
+</div>
+<!-- Goal Card 4 -->
+<div class="bg-white dark:bg-surface-dark p-4 rounded-xl flex flex-col gap-3 shadow-sm dark:shadow-none hover:bg-gray-50 dark:hover:bg-surface-highlight transition-colors cursor-pointer border border-gray-100 dark:border-white/5">
+<div class="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
+<span class="material-symbols-outlined text-orange-400">bolt</span>
+</div>
+<div>
+<h4 class="font-bold text-gray-900 dark:text-white">Energy Boost</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400">Gamma waves</p>
+</div>
+</div>
+</div>
+</section>
+<!-- New Arrivals List -->
+<section class="px-6 pb-20">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-lg font-bold text-gray-900 dark:text-white">New Arrivals</h3>
+</div>
+<div class="flex flex-col gap-3">
+<!-- New Arrival Item 1 -->
+<div class="flex items-center gap-4 p-2 pr-4 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer group">
+<div class="h-14 w-14 shrink-0 rounded-lg bg-cover bg-center" data-alt="Abstract dark smoke texture" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCeRvUAG3fkHSjtsbv9BSh0sDddkY39dB_xe1hCFHmDp5lGeOQ8GWdxtKvW4H1QGVSYaRygeYfHE3R7Jj2YGYTOHZ_9i7caIy2U4eo-WKGEF-zuWyIX4khVYifB46vFh61tlV_xMjbOAOSNNEQfK24EtXIaHqT3lMIGPyrMcFTgQDVoU-Rm5KxoCfJyFkKEjkXbNJymMqFiV3ZVBWyQSegGs_lq7-kizmDu-Z7OVuFLHLeyRa4Hgfkv_peH6KQIR2HOz__bTr3oV4k");'>
+<div class="w-full h-full bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg">
+<span class="material-symbols-outlined text-white text-sm">play_arrow</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-gray-900 dark:text-white truncate">Cosmic Drift</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400 truncate">Relaxation • 25 min</p>
+</div>
+<button class="w-8 h-8 rounded-full border border-gray-200 dark:border-white/20 flex items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-colors">
+<span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+</button>
+</div>
+<!-- New Arrival Item 2 -->
+<div class="flex items-center gap-4 p-2 pr-4 rounded-xl hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer group">
+<div class="h-14 w-14 shrink-0 rounded-lg bg-cover bg-center" data-alt="Dark purple gradient mesh" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAD8ugeknQ8j8w7GOM_nzDlJCSsKHvkGUKkOmZtqV1fcLaXiZzpO-g5b-mH9025tx7VAEDGxOrenhkBe_SaSUx8LSvET_XbiLEcXw6nGEdUMLUYAsaXKdBd3APxv3RqBBYIWVLYhVoBPRIIdkMd9vIRkeE4JjrySyu6DZjYXH7IbjZG7G-n2TVHmaL8CWHA_FQ5BIbZbZGnGjRrbH_Sc1P3tYV7exE0rcq6BjlvGz2eC_qsDK3s-ozhLugm2wJaAd--Nv0Xfm3qWTA");'>
+<div class="w-full h-full bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg">
+<span class="material-symbols-outlined text-white text-sm">play_arrow</span>
+</div>
+</div>
+<div class="flex-1 min-w-0">
+<h4 class="text-sm font-bold text-gray-900 dark:text-white truncate">Morning Alignment</h4>
+<p class="text-xs text-gray-500 dark:text-gray-400 truncate">Focus • 10 min</p>
+</div>
+<button class="w-8 h-8 rounded-full border border-gray-200 dark:border-white/20 flex items-center justify-center text-gray-400 hover:text-primary hover:border-primary transition-colors">
+<span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+</button>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Nav -->
+<nav class="fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-[#1a0d1a]/90 backdrop-blur-lg border-t border-gray-200 dark:border-white/5 max-w-md mx-auto">
+<div class="flex justify-around items-center h-20 pb-4 px-2">
+<a class="flex flex-col items-center gap-1 w-16 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined" style="font-size: 26px;">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</a>
+<a class="flex flex-col items-center gap-1 w-16 text-primary animate-pulse-slow" href="#">
+<span class="material-symbols-outlined fill-1" style="font-size: 26px;">explore</span>
+<span class="text-[10px] font-medium">Explore</span>
+</a>
+<div class="relative -top-5">
+<button class="h-14 w-14 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/40 text-white transition-transform active:scale-95">
+<span class="material-symbols-outlined" style="font-size: 32px;">play_arrow</span>
+</button>
+</div>
+<a class="flex flex-col items-center gap-1 w-16 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined" style="font-size: 26px;">bar_chart</span>
+<span class="text-[10px] font-medium">Stats</span>
+</a>
+<a class="flex flex-col items-center gap-1 w-16 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined" style="font-size: 26px;">person</span>
+<span class="text-[10px] font-medium">Profile</span>
+</a>
+</div>
+</nav>
+</div>
+<style>
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        
+        .fill-1 {
+            font-variation-settings: 'FILL' 1;
+        }
+    </style>
+</body></html>

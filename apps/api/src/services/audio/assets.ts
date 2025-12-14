@@ -56,13 +56,21 @@ export async function getBinauralAsset(hz: number = DEFAULT_BINAURAL_HZ): Promis
     // relativePath will be like "assets/audio/binaural/alpha_10hz_400_3min.m4a"
     // We need "/assets/assets/audio/..." but static server serves from PROJECT_ROOT
     // So we just need "/assets/audio/..." - strip the "assets/" prefix if present
-    const urlPath = relativePath.startsWith("assets/") 
+    const basePath = relativePath.startsWith("assets/") 
       ? `/${relativePath}` 
       : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
     
+    // CRITICAL: URL-encode path segments (especially filenames with spaces)
+    // Split path, encode each segment, then rejoin
+    // This ensures "Babbling Brook.m4a" becomes "Babbling%20Brook.m4a"
+    const encodedPath = basePath
+      .split("/")
+      .map(segment => segment ? encodeURIComponent(segment) : segment)
+      .join("/");
+    
     // Convert to absolute URL if it's a relative path
     // Use API_BASE_URL env var or default to localhost
-    const absoluteUrl = urlPath.startsWith("http") ? urlPath : `${getApiBaseUrl()}${urlPath}`;
+    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${getApiBaseUrl()}${encodedPath}`;
     
     return {
         urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },
@@ -100,13 +108,21 @@ export async function getBackgroundAsset(backgroundId: string = DEFAULT_BACKGROU
     // relativePath will be like "assets/audio/background/looped/Babbling Brook.m4a"
     // We need "/assets/assets/audio/..." but static server serves from PROJECT_ROOT
     // So we just need "/assets/audio/..." - strip the "assets/" prefix if present
-    const urlPath = relativePath.startsWith("assets/") 
+    const basePath = relativePath.startsWith("assets/") 
       ? `/${relativePath}` 
       : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
     
+    // CRITICAL: URL-encode path segments (especially filenames with spaces)
+    // Split path, encode each segment, then rejoin
+    // This ensures "Babbling Brook.m4a" becomes "Babbling%20Brook.m4a"
+    const encodedPath = basePath
+      .split("/")
+      .map(segment => segment ? encodeURIComponent(segment) : segment)
+      .join("/");
+    
     // Convert to absolute URL if it's a relative path
     // Use API_BASE_URL env var or default to localhost
-    const absoluteUrl = urlPath.startsWith("http") ? urlPath : `${getApiBaseUrl()}${urlPath}`;
+    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${getApiBaseUrl()}${encodedPath}`;
     
     return {
         urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },

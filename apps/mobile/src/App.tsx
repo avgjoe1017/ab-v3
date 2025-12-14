@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Asset } from "expo-asset";
 import HomeScreen from "./screens/HomeScreen";
+import ExploreScreen from "./screens/ExploreScreen";
 import PlayerScreen from "./screens/PlayerScreen";
 import EditorScreen from "./screens/EditorScreen";
 import { AudioDebugger } from "./components/AudioDebugger";
@@ -58,9 +59,10 @@ export default function App() {
         <NavigationContainer>
           <StatusBar style="auto" />
           <Stack.Navigator>
-            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Explore" component={ExploreScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Editor" component={EditorScreen} />
-            <Stack.Screen name="Player" component={PlayerScreen} />
+            <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
           </Stack.Navigator>
         </NavigationContainer>
         {/* Debug components - collapsible in development */}

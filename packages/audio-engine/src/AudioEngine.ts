@@ -13,12 +13,18 @@ import { Platform } from "react-native";
  * - Manages playback state, mix levels, and looping
  */
 export class AudioEngine {
+  // Build proof - if you see this timestamp, you're running the compiled version
+  private static readonly BUILD_PROOF = "2025-01-14T00:00:00Z";
+  
   private snapshot: AudioEngineSnapshot = {
     status: "idle",
     positionMs: 0,
     durationMs: 0,
-    mix: { affirmations: 1, binaural: 0.6, background: 0.6 }, // Increased from 0.35 to 0.6 for better audibility
+    mix: { affirmations: 1, binaural: 0.3, background: 0.3 }, // Default to 30% for binaural and background
   };
+  
+  // Track if user has explicitly adjusted volumes (prevents reset on reload)
+  private hasUserSetMix: boolean = false;
 
   private listeners = new Set<(s: AudioEngineSnapshot) => void>();
   private queue: Promise<void> = Promise.resolve();
@@ -39,6 +45,7 @@ export class AudioEngine {
   constructor() {
     // Config audio module if needed (e.g. background mode)
     // For now, relies on default or app-level config
+    console.log("[AudioEngine] BUILD PROOF:", AudioEngine.BUILD_PROOF);
   }
 
   subscribe(listener: (s: AudioEngineSnapshot) => void): () => void {
@@ -185,13 +192,9 @@ export class AudioEngine {
         }
 
         // 2. Apply Mix
-        // Preserve current mix if user has adjusted it (not at exact defaults)
+        // Preserve current mix ONLY if user has explicitly adjusted it
         // This prevents volume controls from resetting when reloading the same session
-        const currentMix = this.snapshot.mix;
-        const isDefaultMix = Math.abs(currentMix.affirmations - 1) < 0.01 && 
-                            Math.abs(currentMix.binaural - 0.6) < 0.01 && 
-                            Math.abs(currentMix.background - 0.6) < 0.01;
-        const mixToUse = isDefaultMix ? bundle.mix : currentMix; // Preserve user adjustments
+        const mixToUse = this.hasUserSetMix ? this.snapshot.mix : bundle.mix;
         
         this.affPlayer.volume = mixToUse.affirmations;
         this.binPlayer.volume = mixToUse.binaural;
@@ -255,8 +258,9 @@ export class AudioEngine {
             }
             
             // V3: With loop=true, didJustFinish should not fire. If it does, log warning
-            if (status.didJustFinish) {
-              console.warn("[AudioEngine] ⚠️  Affirmations track finished but should loop! Loop property:", this.affPlayer?.loop);
+            // Guard: Only log if duration is valid (prevents spurious triggers during buffering)
+            if (status.didJustFinish && status.duration && status.duration > 0) {
+              console.warn("[AudioEngine] ⚠️  Affirmations track finished but should loop! Loop property:", this.affPlayer?.loop, "Duration:", status.duration);
               // Don't stop - the track should loop automatically. This is just a diagnostic.
             }
           } else {
@@ -473,186 +477,174 @@ export class AudioEngine {
         return;
       }
 
-      console.log("[AudioEngine] Playing main mix:", {
-        volumes: {
+      // If resuming from pause, just resume at current volumes (no rolling start)
+      if (this.snapshot.status === "paused") {
+        console.log("[AudioEngine] Resuming from pause at current volumes:", {
           aff: this.affPlayer.volume,
           bin: this.binPlayer.volume,
           bg: this.bgPlayer.volume
-        }
-      });
-
-      console.log("[AudioEngine] 🔍 DEBUG: About to enter try block for player startup");
-      console.log("[AudioEngine] 🔍 DEBUG: affPlayer exists?", !!this.affPlayer);
-      console.log("[AudioEngine] 🔍 DEBUG: binPlayer exists?", !!this.binPlayer);
-      console.log("[AudioEngine] 🔍 DEBUG: bgPlayer exists?", !!this.bgPlayer);
-      
-      // Start all players in parallel for better performance
-      const playPromises: Promise<void>[] = [];
-      
-      try {
-        console.log("[AudioEngine] 🔍 DEBUG: Inside try block!");
-        console.log("[AudioEngine] ========================================");
-        console.log("[AudioEngine] About to play all players...");
-        console.log("[AudioEngine] Players exist:", {
-          aff: !!this.affPlayer,
-          bin: !!this.binPlayer,
-          bg: !!this.bgPlayer
-        });
-        console.log("[AudioEngine] ========================================");
-      
-      // Start affirmations player
-      if (this.affPlayer) {
-        playPromises.push(
-          (async () => {
-            try {
-              const affPlayer = this.affPlayer!; // Safe: checked above
-              // Ensure volume is set before playing (use current mix from snapshot)
-              affPlayer.volume = this.snapshot.mix.affirmations;
-              console.log("[AudioEngine] 🎤 Starting affPlayer (volume:", affPlayer.volume, ")");
-              await affPlayer.play();
-              console.log("[AudioEngine] ✅ affPlayer.play() completed");
-            } catch (err) {
-              console.error("[AudioEngine] ❌ Failed to play affPlayer:", err);
-              throw err;
-            }
-          })()
-        );
-      } else {
-        console.error("[AudioEngine] ❌ affPlayer is null, cannot start!");
-      }
-      
-      // Start binaural player
-      if (this.binPlayer) {
-        playPromises.push(
-          (async () => {
-            try {
-              const binPlayer = this.binPlayer!; // Safe: checked above
-              console.log("[AudioEngine] 🎵 Starting binPlayer (volume:", binPlayer.volume, ", loop:", binPlayer.loop, ")");
-              // Ensure volume is set before playing (use current mix from snapshot)
-              binPlayer.volume = this.snapshot.mix.binaural;
-              console.log("[AudioEngine] 🎵 binPlayer volume set to:", binPlayer.volume);
-              await binPlayer.play();
-              console.log("[AudioEngine] ✅ binPlayer.play() completed");
-              // Log status after a moment
-              setTimeout(() => {
-                if (this.binPlayer) {
-                  console.log("[AudioEngine] 🎵 binPlayer status check:", {
-                    playing: this.binPlayer.playing,
-                    volume: this.binPlayer.volume,
-                    loop: this.binPlayer.loop
-                  });
-                  if (!this.binPlayer.playing) {
-                    console.warn("[AudioEngine] ⚠️  binPlayer is NOT playing after play() call!");
-                  }
-                }
-              }, 200);
-            } catch (err) {
-              console.error("[AudioEngine] ❌ Failed to play binPlayer:", err);
-              throw err;
-            }
-          })()
-        );
-      } else {
-        console.error("[AudioEngine] ❌ binPlayer is null, cannot start!");
-      }
-      
-      // Start background player
-      if (this.bgPlayer) {
-        playPromises.push(
-          (async () => {
-            try {
-              const bgPlayer = this.bgPlayer!; // Safe: checked above
-              console.log("[AudioEngine] 🌊 Starting bgPlayer (volume:", bgPlayer.volume, ", loop:", bgPlayer.loop, ")");
-              // Ensure volume is set before playing (use current mix from snapshot)
-              bgPlayer.volume = this.snapshot.mix.background;
-              console.log("[AudioEngine] 🌊 bgPlayer volume set to:", bgPlayer.volume);
-              await bgPlayer.play();
-              console.log("[AudioEngine] ✅ bgPlayer.play() completed");
-              // Log status after a moment to verify it's playing
-              setTimeout(() => {
-                if (this.bgPlayer) {
-                  console.log("[AudioEngine] 🌊 bgPlayer status check:", {
-                    playing: this.bgPlayer.playing,
-                    volume: this.bgPlayer.volume,
-                    loop: this.bgPlayer.loop
-                  });
-                  if (!this.bgPlayer.playing) {
-                    console.warn("[AudioEngine] ⚠️  bgPlayer is NOT playing after play() call!");
-                  }
-                }
-              }, 200);
-            } catch (err) {
-              console.error("[AudioEngine] ❌ Failed to play bgPlayer:", err);
-              throw err;
-            }
-          })()
-        );
-      } else {
-        console.error("[AudioEngine] ❌ bgPlayer is null, cannot start!");
-      }
-      
-      // Wait for all players to start
-      const results = await Promise.allSettled(playPromises);
-      console.log("[AudioEngine] All players started (or failed)");
-      
-      // Check for failures - if affirmations player fails, that's critical
-      const failedPlayers: string[] = [];
-      results.forEach((result, index) => {
-        const playerName = index === 0 ? "affPlayer" : index === 1 ? "binPlayer" : "bgPlayer";
-        if (result.status === "rejected") {
-          console.error(`[AudioEngine] ❌ ${playerName} failed to start:`, result.reason);
-          failedPlayers.push(playerName);
-        } else {
-          console.log(`[AudioEngine] ✅ ${playerName} promise resolved`);
-        }
-      });
-      
-      // If affirmations player (critical) failed, throw error
-      if (failedPlayers.includes("affPlayer")) {
-        const error = new Error("Failed to start affirmations player - this is critical");
-        this.setState({ status: "error", error: { message: error.message } });
-        throw error;
-      }
-      
-      // If other players failed, log warning but continue (they're optional for basic playback)
-      if (failedPlayers.length > 0) {
-        console.warn(`[AudioEngine] ⚠️  Some players failed to start: ${failedPlayers.join(", ")}. Continuing with available players.`);
-      }
-      
-      // Verify all players are actually playing after a brief delay
-      setTimeout(() => {
-        console.log("[AudioEngine] Player status check (after 500ms):", {
-          aff: { playing: this.affPlayer?.playing, volume: this.affPlayer?.volume },
-          bin: { playing: this.binPlayer?.playing, volume: this.binPlayer?.volume },
-          bg: { playing: this.bgPlayer?.playing, volume: this.bgPlayer?.volume }
         });
         
-        // Log warning if players aren't playing
-        if (this.affPlayer && !this.affPlayer.playing) {
-          console.warn("[AudioEngine] ⚠️  Affirmations player not playing after play() call!");
-        }
-        if (this.binPlayer && !this.binPlayer.playing) {
-          console.warn("[AudioEngine] ⚠️  Binaural player not playing! Check volume and audio file.");
-        }
-        if (this.bgPlayer && !this.bgPlayer.playing) {
-          console.warn("[AudioEngine] ⚠️  Background player not playing! Check volume and audio file.");
-        }
-      }, 500);
+        // Simply resume all players at their current volumes
+        await Promise.all([
+          this.affPlayer.play(),
+          this.binPlayer.play(),
+          this.bgPlayer.play()
+        ]);
+        
+        this.startPolling();
+        this.setState({ status: "playing" });
+        console.log("[AudioEngine] Resumed playback");
+        return;
+      }
 
-      console.log("[AudioEngine] 🔍 DEBUG: About to call startPolling() and setState(playing)");
-      this.startPolling();
-      this.setState({ status: "playing" });
-      console.log("[AudioEngine] All players started, status set to playing");
+      // Rolling start only for initial play (from ready state)
+      console.log("[AudioEngine] Playing main mix with rolling start:", {
+        volumes: {
+          aff: this.snapshot.mix.affirmations,
+          bin: this.snapshot.mix.binaural,
+          bg: this.snapshot.mix.background
+        }
+      });
+
+      // Initialize all players at volume 0 for rolling start
+      if (this.affPlayer) this.affPlayer.volume = 0;
+      if (this.binPlayer) this.binPlayer.volume = 0;
+      if (this.bgPlayer) this.bgPlayer.volume = 0;
+      
+      try {
+        // Rolling start sequence:
+        // 1. Background starts first, fades in over 3 seconds
+        // 2. Binaural starts after background begins, fades in over 1 second
+        // 3. Affirmations start after binaural begins (no fade, immediate)
+        
+        console.log("[AudioEngine] Step 1: Starting background player...");
+        await this.bgPlayer!.play();
+        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        
+        // Verify background is playing
+        if (!this.bgPlayer!.playing) {
+          console.warn("[AudioEngine] ⚠️  Background player not playing, retrying...");
+          await this.bgPlayer!.pause();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await this.bgPlayer!.play();
+        }
+        
+        console.log("[AudioEngine] ✅ Background started, fading in over 3 seconds");
+        const targetBgVolume = this.snapshot.mix.background;
+        this.fadeVolume(this.bgPlayer!, 0, targetBgVolume, 3000);
+        
+        // Wait 1 second before starting binaural (so it starts 1s into background fade)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log("[AudioEngine] Step 2: Starting binaural player...");
+        await this.binPlayer!.play();
+        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        
+        // Verify binaural is playing
+        if (!this.binPlayer!.playing) {
+          console.warn("[AudioEngine] ⚠️  Binaural player not playing, retrying...");
+          await this.binPlayer!.pause();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await this.binPlayer!.play();
+        }
+        
+        console.log("[AudioEngine] ✅ Binaural started, fading in over 1 second");
+        const targetBinVolume = this.snapshot.mix.binaural;
+        this.fadeVolume(this.binPlayer!, 0, targetBinVolume, 1000);
+        
+        // Wait 1 second before starting affirmations (so it starts when binaural fade completes)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log("[AudioEngine] Step 3: Starting affirmations player...");
+        // Set affirmations to target volume immediately (no fade)
+        if (this.affPlayer) {
+          this.affPlayer.volume = this.snapshot.mix.affirmations;
+        }
+        await this.affPlayer!.play();
+        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        
+        // Verify affirmations is playing
+        if (!this.affPlayer!.playing) {
+          console.warn("[AudioEngine] ⚠️  Affirmations player not playing, retrying...");
+          await this.affPlayer!.pause();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await this.affPlayer!.play();
+        }
+        
+        console.log("[AudioEngine] ✅ All players started with rolling start sequence");
+        
+        // Verify all players are actually playing after a brief delay
+        setTimeout(() => {
+          console.log("[AudioEngine] Player status check (after 500ms):", {
+            aff: { 
+              playing: this.affPlayer?.playing, 
+              volume: this.affPlayer?.volume,
+              duration: this.affPlayer?.duration 
+            },
+            bin: { 
+              playing: this.binPlayer?.playing, 
+              volume: this.binPlayer?.volume,
+              duration: this.binPlayer?.duration,
+              loop: this.binPlayer?.loop
+            },
+            bg: { 
+              playing: this.bgPlayer?.playing, 
+              volume: this.bgPlayer?.volume,
+              duration: this.bgPlayer?.duration,
+              loop: this.bgPlayer?.loop
+            }
+          });
+          
+          // Log warnings if players aren't playing
+          if (this.affPlayer && !this.affPlayer.playing) {
+            console.warn("[AudioEngine] ⚠️  Affirmations player not playing after play() call!");
+          }
+          if (this.binPlayer && !this.binPlayer.playing) {
+            console.warn("[AudioEngine] ⚠️  Binaural player not playing! Check volume and audio file.");
+          }
+          if (this.bgPlayer && !this.bgPlayer.playing) {
+            console.warn("[AudioEngine] ⚠️  Background player not playing! Check volume and audio file.");
+          }
+        }, 500);
+        
+        this.startPolling();
+        this.setState({ status: "playing" });
+        console.log("[AudioEngine] All players started, status set to playing");
       } catch (error) {
-        console.error("[AudioEngine] ❌ CRITICAL ERROR in play() method:", error);
+        console.error("[AudioEngine] ❌ CRITICAL ERROR starting players:", error);
         console.error("[AudioEngine] Error type:", typeof error);
         console.error("[AudioEngine] Error message:", error instanceof Error ? error.message : String(error));
         console.error("[AudioEngine] Error stack:", error instanceof Error ? error.stack : "No stack");
-        // Still set status to playing so UI doesn't hang
+        // Set error state but don't throw - let playback continue with available players
+        this.setState({ status: "error", error: { message: error instanceof Error ? error.message : String(error) } });
+        // Still start polling and set playing so UI doesn't hang
+        this.startPolling();
         this.setState({ status: "playing" });
-        throw error;
       }
     });
+  }
+
+  /**
+   * Fade a single player's volume smoothly from start to target.
+   */
+  private fadeVolume(player: AudioPlayer, from: number, to: number, durationMs: number): void {
+    const steps = 30; // More steps for smoother fade
+    const stepDuration = durationMs / steps;
+    const stepSize = (to - from) / steps;
+    let currentStep = 0;
+
+    const fadeInterval = setInterval(() => {
+      currentStep++;
+      const currentVolume = from + stepSize * currentStep;
+      player.volume = Math.max(0, Math.min(1, currentVolume)); // Clamp to 0-1
+
+      if (currentStep >= steps) {
+        clearInterval(fadeInterval);
+        // Ensure final volume is exact
+        player.volume = to;
+      }
+    }, stepDuration);
   }
 
   /**
@@ -795,6 +787,9 @@ export class AudioEngine {
   setMix(mix: Mix): void {
     // This can be sync-ish but safer in queue to avoid access race
     this.enqueue(async () => {
+      // Mark that user has explicitly set the mix (prevents reset on reload)
+      this.hasUserSetMix = true;
+      
       if (this.affPlayer) this.affPlayer.volume = mix.affirmations;
       if (this.binPlayer) this.binPlayer.volume = mix.binaural;
       if (this.bgPlayer) this.bgPlayer.volume = mix.background;
