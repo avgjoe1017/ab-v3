@@ -7,6 +7,7 @@ import { SessionV3Schema, type SessionV3 } from "@ab/contracts";
 import { AppScreen, IconButton, SectionHeader, PrimaryButton, Chip, Card } from "../components";
 import { theme } from "../theme";
 import { toggleSavedSession, isSessionSaved } from "../storage/savedSessions";
+import { getFrequencyExplanation } from "../lib/science";
 
 export default function SessionDetailScreen({ route, navigation }: any) {
   const sessionId: string = route.params.sessionId;
@@ -46,6 +47,12 @@ export default function SessionDetailScreen({ route, navigation }: any) {
       .slice(0, 6); // Limit to 6
     return related;
   }, [session, allSessions, sessionId]);
+
+  // Get frequency explanation for "Why this works" section (must be before early return)
+  const frequencyExplanation = useMemo(() => {
+    if (!session) return null;
+    return getFrequencyExplanation(session.brainwaveState);
+  }, [session?.brainwaveState]);
 
   // Fetch playback bundle to get mix info
   const { data: bundle } = useQuery({
@@ -167,6 +174,29 @@ export default function SessionDetailScreen({ route, navigation }: any) {
             </View>
           </Card>
         </View>
+
+        {/* Why This Works - Frequency Explanation */}
+        {frequencyExplanation && (
+          <View style={styles.section}>
+            <SectionHeader title="Why this works" />
+            <Card variant="default" style={styles.frequencyCard}>
+              <View style={styles.frequencyContent}>
+                <Text style={styles.frequencyTitle}>{frequencyExplanation.title}</Text>
+                <Text style={styles.frequencyText}>{frequencyExplanation.content}</Text>
+                {frequencyExplanation.benefits.length > 0 && (
+                  <View style={styles.benefitsContainer}>
+                    {frequencyExplanation.benefits.map((benefit, index) => (
+                      <View key={index} style={styles.benefitItem}>
+                        <MaterialIcons name="check-circle" size={20} color={theme.colors.accent.primary} />
+                        <Text style={styles.benefitText}>{benefit}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </Card>
+          </View>
+        )}
 
         {/* Affirmations Preview */}
         {session.affirmations && session.affirmations.length > 0 && (
@@ -380,6 +410,40 @@ const styles = StyleSheet.create({
   actionContainer: {
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[6],
+  },
+  frequencyCard: {
+    gap: theme.spacing[4],
+  },
+  frequencyContent: {
+    gap: theme.spacing[4],
+  },
+  frequencyTitle: {
+    ...theme.typography.styles.h3,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+  },
+  frequencyText: {
+    ...theme.typography.styles.body,
+    fontSize: theme.typography.fontSize.md,
+    lineHeight: theme.typography.lineHeight.relaxed,
+    color: theme.colors.text.secondary,
+  },
+  benefitsContainer: {
+    gap: theme.spacing[3],
+    marginTop: theme.spacing[2],
+  },
+  benefitItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  benefitText: {
+    ...theme.typography.styles.body,
+    fontSize: theme.typography.fontSize.sm,
+    lineHeight: theme.typography.lineHeight.normal,
+    color: theme.colors.text.secondary,
+    flex: 1,
   },
 });
 

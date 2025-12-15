@@ -68,7 +68,8 @@ export async function generateVoiceActivitySegments(
         while ((match = silenceEndRegex.exec(stderr)) !== null && endIndex < silenceWindows.length) {
             const matchValue = match[1];
             if (!matchValue) {
-                endIndex++;
+                // Skip invalid match without incrementing endIndex
+                // This allows the next valid match to pair with the current window
                 continue;
             }
             const end = parseFloat(matchValue) * 1000; // Convert to ms

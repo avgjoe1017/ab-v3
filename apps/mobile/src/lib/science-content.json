@@ -1,0 +1,187 @@
+{
+  "scienceCards": [
+    {
+      "id": "alpha-anxiety",
+      "title": "Alpha Waves Reduce Anxiety",
+      "content": "Alpha waves (8-12 Hz) are associated with relaxed alertness. Studies show a 26.3% reduction in anxiety with alpha-frequency binaural beats.",
+      "category": "binaural-beats",
+      "icon": "waves"
+    },
+    {
+      "id": "repetition-matters",
+      "title": "Repetition Matters",
+      "content": "Research shows hearing the same affirmation multiple times is more effective than hearing many different ones. That's why we use 3-6 affirmations repeated throughout your session.",
+      "category": "affirmations",
+      "icon": "repeat"
+    },
+    {
+      "id": "values-based",
+      "title": "Values-Based Affirmations Work Better",
+      "content": "Values-based affirmations work better because they connect to your identity, not just wishful thinking. They're more meaningful and believable.",
+      "category": "affirmations",
+      "icon": "favorite"
+    },
+    {
+      "id": "400hz-carrier",
+      "title": "Why 400 Hz?",
+      "content": "All binaural beats use a 400 Hz carrier frequency. This frequency is optimal for creating the binaural effect without interfering with the beat frequency your brain perceives.",
+      "category": "binaural-beats",
+      "icon": "graphic-eq"
+    },
+    {
+      "id": "delta-sleep",
+      "title": "Delta Waves for Deep Sleep",
+      "content": "Delta waves (2-4 Hz) are associated with deep, restorative sleep. Binaural beats in this range can help your brain transition into sleep states more easily.",
+      "category": "binaural-beats",
+      "icon": "bedtime"
+    },
+    {
+      "id": "beta-focus",
+      "title": "Beta Waves Enhance Focus",
+      "content": "Beta waves (14-30 Hz) are linked to alertness and concentration. Lower beta frequencies (14-20 Hz) can help maintain focus without causing restlessness.",
+      "category": "binaural-beats",
+      "icon": "visibility"
+    },
+    {
+      "id": "theta-creativity",
+      "title": "Theta Waves Boost Creativity",
+      "content": "Theta waves (4-8 Hz) occur in deep meditation and are associated with creativity, intuition, and insight. The theta-alpha crossover (6-10 Hz) can enhance creative thinking.",
+      "category": "binaural-beats",
+      "icon": "lightbulb"
+    },
+    {
+      "id": "smr-concentration",
+      "title": "SMR for Sustained Attention",
+      "content": "Sensorimotor rhythm (SMR) waves (12-15 Hz) are associated with focused concentration and flow states. They help reduce distractions while maintaining alertness.",
+      "category": "binaural-beats",
+      "icon": "center-focus-strong"
+    },
+    {
+      "id": "first-person-affirmations",
+      "title": "First-Person Affirmations",
+      "content": "Affirmations work best when stated in first person ('I am...') rather than second person ('You are...'). This creates a direct connection to your identity.",
+      "category": "affirmations",
+      "icon": "person"
+    },
+    {
+      "id": "present-tense",
+      "title": "Present Tense Matters",
+      "content": "Effective affirmations are written in present tense, not future tense. 'I am confident' is more powerful than 'I will be confident' because it activates your current identity.",
+      "category": "affirmations",
+      "icon": "schedule"
+    },
+    {
+      "id": "15-minute-minimum",
+      "title": "Minimum 15 Minutes",
+      "content": "Binaural beats require at least 15 minutes of continuous listening to effectively entrain brainwave patterns. Shorter sessions have minimal impact on brainwave frequency.",
+      "category": "binaural-beats",
+      "icon": "timer"
+    },
+    {
+      "id": "headphones-required",
+      "title": "Why Headphones Matter",
+      "content": "Binaural beats only work with stereo headphones. Your brain creates the beat frequency by comparing the slight frequency difference between your left and right ears.",
+      "category": "binaural-beats",
+      "icon": "headphones"
+    },
+    {
+      "id": "no-subliminal",
+      "title": "No Subliminal Messages",
+      "content": "Entrain uses clear, audible affirmations—not subliminal messages. Research shows subliminal affirmations have no proven benefit. Honest, conscious affirmation is more effective.",
+      "category": "methodology",
+      "icon": "hearing"
+    },
+    {
+      "id": "awake-listening",
+      "title": "Listen While Awake",
+      "content": "Affirmations are most effective when you're awake and can consciously engage with them. While you sleep, your brain processes information differently, making affirmations less impactful.",
+      "category": "methodology",
+      "icon": "wb-sunny"
+    },
+    {
+      "id": "believable-stretch",
+      "title": "Believable Stretch",
+      "content": "The best affirmations are a 'believable stretch'—challenging but not delusional. They should feel achievable, building genuine self-belief over time rather than creating internal resistance.",
+      "category": "affirmations",
+      "icon": "trending-up"
+    }
+  ],
+  "frequencyExplanations": {
+    "Delta": {
+      "title": "Why Delta Waves Work",
+      "content": "Delta waves (2-4 Hz) are the slowest brainwave frequency, associated with deep, restorative sleep. Binaural beats in the delta range help synchronize your brainwaves to this state, promoting relaxation and sleep onset.",
+      "benefits": [
+        "Deep, restorative sleep",
+        "Physical healing and recovery",
+        "Release of daily stress"
+      ]
+    },
+    "Theta": {
+      "title": "Why Theta Waves Work",
+      "content": "Theta waves (4-8 Hz) occur in deep meditation and light sleep. They're associated with creativity, intuition, and deep relaxation. Theta-frequency binaural beats can help you access meditative states more easily.",
+      "benefits": [
+        "Deep meditation and presence",
+        "Enhanced creativity and insight",
+        "Reduced mental chatter"
+      ]
+    },
+    "Alpha": {
+      "title": "Why Alpha Waves Work",
+      "content": "Alpha waves (8-12 Hz) are associated with relaxed alertness—calm but aware. Studies show alpha-frequency binaural beats can reduce anxiety by 26.3% and promote a state of peaceful focus.",
+      "benefits": [
+        "Reduced anxiety and stress",
+        "Calm, relaxed alertness",
+        "Improved mood and well-being"
+      ]
+    },
+    "SMR": {
+      "title": "Why SMR Waves Work",
+      "content": "Sensorimotor rhythm (SMR) waves (12-15 Hz) are associated with focused concentration and flow states. They help reduce distractions while maintaining alertness, making them ideal for deep work.",
+      "benefits": [
+        "Sustained focus and attention",
+        "Flow states and deep work",
+        "Reduced distractions"
+      ]
+    },
+    "Beta": {
+      "title": "Why Beta Waves Work",
+      "content": "Beta waves (14-30 Hz) are linked to alertness, energy, and active thinking. Lower beta frequencies (14-20 Hz) can enhance wakefulness and mental clarity without causing restlessness.",
+      "benefits": [
+        "Increased alertness and energy",
+        "Enhanced mental clarity",
+        "Wakefulness without jitteriness"
+      ]
+    }
+  },
+  "whyWeDont": [
+    {
+      "id": "no-subliminal",
+      "title": "Why We Don't Use Subliminal Affirmations",
+      "content": "Some apps claim that subliminal messages (affirmations played below the threshold of conscious awareness) can reprogram your mind. However, decades of research have found no reliable evidence that subliminal affirmations produce meaningful, lasting effects. In fact, studies consistently show that conscious, audible affirmations are more effective because they engage your active attention and reflection.",
+      "category": "methodology",
+      "icon": "hearing"
+    },
+    {
+      "id": "no-sleep-affirmations",
+      "title": "Why We Don't Play Affirmations While You Sleep",
+      "content": "While it might seem appealing to program your mind while you sleep, the research shows minimal benefit. During deep sleep, your brain processes information very differently than when awake. Conscious engagement with affirmations—hearing them, reflecting on them, and connecting them to your values—is what makes them effective. We focus on creating sessions you listen to while awake and present.",
+      "category": "methodology",
+      "icon": "bedtime"
+    },
+    {
+      "id": "limited-session-types",
+      "title": "Why We Limit Session Types",
+      "content": "We offer 8 evidence-based session types, each targeting specific brainwave frequencies that research shows are effective. We don't offer hundreds of vague options because more isn't always better. By focusing on well-researched frequencies (Alpha for relaxation, Beta for focus, Delta for sleep, etc.), we ensure every session is backed by science and genuinely helpful.",
+      "category": "methodology",
+      "icon": "science"
+    },
+    {
+      "id": "evidence-based",
+      "title": "Our Evidence-Based Approach",
+      "content": "Entrain only includes features and methodologies that have demonstrated effectiveness in peer-reviewed research. We're transparent about what works, what doesn't, and why. This means we might seem more limited than other apps, but every feature is intentionally chosen based on scientific evidence, not marketing claims.",
+      "category": "methodology",
+      "icon": "verified"
+    }
+  ]
+}
+

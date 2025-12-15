@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -7,11 +7,12 @@ import { apiGet } from "../lib/api";
 import { useDraftStore } from "../state/useDraftStore";
 import { useEntitlement } from "../hooks/useEntitlement";
 import { getAudioEngine } from "@ab/audio-engine";
-import { AppScreen, PrimaryButton, SessionTile, SectionHeader, BottomTabs, MiniPlayer, IconButton, Chip, Card } from "../components";
+import { AppScreen, PrimaryButton, SessionTile, SectionHeader, BottomTabs, MiniPlayer, IconButton, Chip, Card, ScienceCard } from "../components";
 import { theme } from "../theme";
 import type { TabRoute } from "../components";
 import { useActiveProgram } from "../hooks";
 import { useOnboardingPreferences } from "../hooks/useOnboardingPreferences";
+import { getRandomScienceCard } from "../lib/science";
 
 type SessionRow = { id: string; title: string; goalTag?: string };
 
@@ -83,6 +84,9 @@ export default function HomeScreen({ navigation }: any) {
   const currentSessionId = snapshot.sessionId;
   const { data: activeProgram } = useActiveProgram();
 
+  // Get a random science card for "Did you know?" section
+  const scienceCard = useMemo(() => getRandomScienceCard(), []);
+
   const handleBeginPress = () => {
     if (!sessions || sessions.length === 0) {
       console.warn("[HomeScreen] No sessions loaded yet");
@@ -138,7 +142,7 @@ export default function HomeScreen({ navigation }: any) {
             </View>
             <IconButton
               icon="account-circle"
-              onPress={() => {}}
+              onPress={() => navigation.navigate("Settings")}
               variant="filled"
             />
           </View>
@@ -268,6 +272,14 @@ export default function HomeScreen({ navigation }: any) {
             </ScrollView>
           </View>
         )}
+
+        {/* Did You Know? - Science Card */}
+        <View style={styles.section}>
+          <SectionHeader title="Did you know?" />
+          <View style={styles.scienceCardContainer}>
+            <ScienceCard data={scienceCard} variant="default" />
+          </View>
+        </View>
 
         {/* Continue Practice */}
         <View style={styles.section}>
@@ -504,5 +516,8 @@ const styles = StyleSheet.create({
     ...theme.typography.styles.caption,
     fontSize: theme.typography.fontSize.xs,
     color: theme.colors.text.tertiary,
+  },
+  scienceCardContainer: {
+    paddingHorizontal: theme.spacing[6],
   },
 });

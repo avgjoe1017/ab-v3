@@ -9,8 +9,12 @@ import { createReadStream } from "fs";
 import { createJob, getJob, registerJobProcessor, startJobWorker } from "./services/jobs";
 import { processEnsureAudioJob } from "./services/audio/generation";
 import { getEntitlement } from "./services/entitlements";
+import { generateAffirmations, type AffirmationGenerationRequest } from "./services/affirmation-generator";
+import { getFrequencyForGoalTag } from "./services/session-frequency";
 
 import { prisma } from "./lib/db";
+import { getUserId } from "./lib/auth";
+import { requireAuthMiddleware } from "./middleware/auth";
 
 const app = new Hono();
 
@@ -29,12 +33,183 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 // ---- ENTITLEMENTS ----
 app.get("/me/entitlement", async (c) => {
-  // Mock user ID (same as in POST /sessions)
-  // In real auth, extract from token
-  // For MVP, checking "default-user" usage or null
-  const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000000"; // Valid UUID for default user
-  const ent = await getEntitlement(DEFAULT_USER_ID);
+  // Phase 6.1: Use auth helper (currently returns default user ID, ready for Clerk integration)
+  const userId = await getUserId(c);
+  const ent = await getEntitlement(userId);
   return c.json(ent);
+});
+
+// ---- AFFIRMATIONS ----
+app.post("/affirmations/generate", async (c) => {
+  try {
+    const body = await c.req.json();
+    
+    // Validate request
+    const request: AffirmationGenerationRequest = {
+      values: body.values || [],
+      sessionType: body.sessionType || "Meditate",
+      struggle: body.struggle,
+      count: body.count || 4,
+    };
+
+    // Generate affirmations
+    const result = await generateAffirmations(request);
+    
+    return c.json({
+      affirmations: result.affirmations,
+      reasoning: result.reasoning,
+    });
+  } catch (err: unknown) {
+    console.error("[API] Error generating affirmations:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to generate affirmations", errorMessage),
+      500
+    );
+  }
+});
+
+// ---- USER VALUES ----
+app.post("/me/values", async (c) => {
+  try {
+    const body = await c.req.json();
+    
+    // Validate request
+    if (!Array.isArray(body.values)) {
+      return c.json(error("VALIDATION_ERROR", "values must be an array"), 400);
+    }
+
+    // Phase 6.1: Use auth helper (currently returns default user ID, ready for Clerk integration)
+    const userId = await getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+    
+    // Ensure user exists (use upsert to handle case where user exists with different email)
+    const user = await prisma.user.upsert({
+      where: { id: userId },
+      update: {}, // Don't update if exists
+      create: {
+        id: userId,
+        email: `user-${userId}@example.com`, // Email will come from auth provider in production
+      },
+    });
+
+    // Delete existing values for this user
+    await prisma.userValue.deleteMany({
+      where: { userId },
+    });
+
+    // Create new values with ranking
+    const valuesToCreate = body.values.map((value: { valueId: string; valueText: string; rank?: number }, index: number) => ({
+      userId,
+      valueId: value.valueId,
+      valueText: value.valueText,
+      rank: value.rank ?? (index < 3 ? index + 1 : null), // Top 3 get ranks 1-3, rest are null
+    }));
+
+    await prisma.userValue.createMany({
+      data: valuesToCreate,
+    });
+
+    return c.json({ success: true, count: valuesToCreate.length });
+  } catch (err: unknown) {
+    console.error("[API] Error saving user values:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to save user values", errorMessage),
+      500
+    );
+  }
+});
+
+app.get("/me/values", async (c) => {
+  try {
+    // Phase 6.1: Use auth helper
+    const userId = getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+    
+    const values = await prisma.userValue.findMany({
+      where: { userId },
+      orderBy: [
+        { rank: "asc" }, // Ranked values first
+        { createdAt: "asc" }, // Then by creation order
+      ],
+    });
+
+    return c.json({ values });
+  } catch (err: unknown) {
+    console.error("[API] Error fetching user values:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to fetch user values", errorMessage),
+      500
+    );
+  }
+});
+
+app.put("/me/struggle", async (c) => {
+  try {
+    const body = await c.req.json();
+    const struggle = typeof body.struggle === "string" ? body.struggle.trim() : null;
+
+    // Validate length
+    if (struggle && struggle.length > 200) {
+      return c.json(error("VALIDATION_ERROR", "Struggle text must be 200 characters or less"), 400);
+    }
+
+    // Phase 6.1: Use auth helper
+    const userId = getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+    
+    // Ensure user exists and update struggle
+    const user = await prisma.user.upsert({
+      where: { id: userId },
+      update: { struggle: struggle || null },
+      create: {
+        id: userId,
+        email: `user-${userId}@example.com`, // Email will come from auth provider in production
+        struggle: struggle || undefined,
+      },
+    });
+
+    return c.json({ success: true, struggle: user.struggle });
+  } catch (err: unknown) {
+    console.error("[API] Error saving user struggle:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to save user struggle", errorMessage),
+      500
+    );
+  }
+});
+
+app.get("/me/struggle", async (c) => {
+  try {
+    // Phase 6.1: Use auth helper
+    const userId = getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+    
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { struggle: true },
+    });
+
+    return c.json({ struggle: user?.struggle || null });
+  } catch (err: unknown) {
+    console.error("[API] Error fetching user struggle:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to fetch user struggle", errorMessage),
+      500
+    );
+  }
 });
 
 // ---- SESSIONS ----
@@ -59,40 +234,35 @@ app.post("/sessions", async (c) => {
   }
 
   // Risk 3: Entitlements Must Be Enforced Server-Side Early
-  // Use a valid UUID for the default user (required by schema)
-  const DEFAULT_EMAIL = "default@example.com";
-  const userId = "00000000-0000-0000-0000-000000000000"; // Hardcoded default user UUID for MVP
+  // Phase 6.1: Use auth helper (currently returns default user ID, ready for Clerk integration)
+  const userId = await getUserId(c);
+  if (!userId) {
+    return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+  }
   
-  // Ensure default user exists (for foreign key constraint)
-  // Try to find by ID first, then by email if needed
+  // Ensure user exists (for foreign key constraint)
+  // In production with Clerk, user will already exist from auth flow
   let user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
-    // Check if user exists with this email but different ID
-    const existingByEmail = await prisma.user.findUnique({ where: { email: DEFAULT_EMAIL } });
-    if (existingByEmail) {
-      // If existing user has invalid UUID, use null (schema allows nullable)
-      // Otherwise use the existing user's ID
-      const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(existingByEmail.id);
-      user = isValidUUID ? existingByEmail : null;
-    } else {
-      // Create new user with the default UUID
-      user = await prisma.user.create({ 
-        data: { id: userId, email: DEFAULT_EMAIL } 
-      });
-    }
+    // Create user if doesn't exist (in production, Clerk webhook should create user)
+    user = await prisma.user.create({ 
+      data: { 
+        id: userId, 
+        email: `user-${userId}@example.com` // Email will come from auth provider in production
+      } 
+    });
   }
-  // Use null if user has invalid UUID (schema allows nullable)
-  const finalUserId = user && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id) 
-    ? user.id 
-    : null;
   
-  const entitlement = await getEntitlement(finalUserId);
+  const entitlement = await getEntitlement(userId);
 
   if (!entitlement.canCreateSession) {
     return c.json(error("FREE_LIMIT_REACHED", "You have reached your daily limit of free sessions."), 403);
   }
 
   // Duration check removed for V3 (Infinite sessions)
+
+  // Phase 4.1: Get frequency info for this session type
+  const frequencyInfo = getFrequencyForGoalTag(parsedBody.data.goalTag);
 
   // Create DB entry
   const session = await prisma.session.create({
@@ -106,6 +276,8 @@ app.post("/sessions", async (c) => {
       pace: "slow", // Locked
       affirmationSpacingMs: undefined, // Fixed internally
       affirmationsHash: crypto.createHash("sha256").update(parsedBody.data.affirmations.join("|")).digest("hex"),
+      frequencyHz: frequencyInfo.frequencyHz,
+      brainwaveState: frequencyInfo.brainwaveState,
       // Create session affirmations
       affirmations: {
         create: parsedBody.data.affirmations.map((text: string, idx: number) => ({
@@ -142,6 +314,8 @@ app.post("/sessions", async (c) => {
     voiceId: session.voiceId,
     pace: "slow",
     // affirmationSpacingMs: 0, // Removed
+    frequencyHz: session.frequencyHz ?? undefined,
+    brainwaveState: session.brainwaveState ?? undefined,
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
     audio: undefined // Not fully ready yet usually
@@ -165,6 +339,30 @@ app.get("/sessions/:id", async (c) => {
 
   if (!session) return c.json(error("NOT_FOUND", "Session not found"), 404);
 
+  // Construct affirmations URL if audio exists (same logic as playback-bundle endpoint)
+  let affirmationsMergedUrl: string | undefined;
+  if (session.audio?.mergedAudioAsset?.url) {
+    const filePath = session.audio.mergedAudioAsset.url;
+    const protocol = c.req.header("x-forwarded-proto") || "http";
+    const host = c.req.header("host") || "localhost:8787";
+    
+    let affirmationsUrlRelative: string;
+    if (path.isAbsolute(filePath)) {
+      const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+      affirmationsUrlRelative = relativePath.startsWith("storage/") 
+        ? `/${relativePath}` 
+        : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+    } else {
+      affirmationsUrlRelative = filePath.startsWith("storage/") 
+        ? `/${filePath}` 
+        : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+    }
+    
+    affirmationsMergedUrl = affirmationsUrlRelative.startsWith("http") 
+      ? affirmationsUrlRelative 
+      : `${protocol}://${host}${affirmationsUrlRelative}`;
+  }
+
   // Map to strict SessionV3 (V3 compliance: no durationSec, pace is always "slow", no affirmationSpacingMs)
   try {
     const sessionV3 = SessionV3Schema.parse({
@@ -179,10 +377,12 @@ app.get("/sessions/:id", async (c) => {
       voiceId: session.voiceId,
       pace: "slow", // V3: pace is always "slow"
       // affirmationSpacingMs removed in V3 (fixed internally)
+      frequencyHz: session.frequencyHz ?? undefined, // Phase 4.1: Frequency transparency
+      brainwaveState: session.brainwaveState ?? undefined, // Phase 4.1: Brainwave state
       createdAt: session.createdAt.toISOString(),
       updatedAt: session.updatedAt.toISOString(),
-      audio: session.audio?.mergedAudioAsset ? {
-        affirmationsMergedUrl: `${STORAGE_PUBLIC_BASE_URL}/${path.relative(process.cwd(), session.audio.mergedAudioAsset.url)}`,
+      audio: session.audio?.mergedAudioAsset && affirmationsMergedUrl ? {
+        affirmationsMergedUrl,
         affirmationsHash: session.audio.mergedAudioAsset.hash,
         generatedAt: session.audio.generatedAt.toISOString(),
       } : undefined
@@ -251,8 +451,10 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
     let binaural;
     let background;
     
+    // Phase 4.1: Use session's frequencyHz if available, otherwise default to 10Hz
+    const binauralHz = session.frequencyHz ?? 10;
     try {
-      binaural = await getBinauralAsset(10, apiBaseUrl); // Default to 10Hz alpha
+      binaural = await getBinauralAsset(binauralHz, apiBaseUrl);
     } catch (binauralError: any) {
       console.error("[API] Failed to get binaural asset:", binauralError);
       return c.json(error("ASSET_ERROR", `Binaural asset not available: ${binauralError.message}`, binauralError), 500);
@@ -389,15 +591,46 @@ if (import.meta.main) {
       }
       
       // Support Range requests (required for iOS AVPlayer)
+      // RFC 7233 formats: bytes=start-end, bytes=start-, bytes=-suffix
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const startStr = parts[0];
-        if (!startStr) {
+        const endStr = parts[1];
+        
+        let start: number;
+        let end: number;
+        
+        if (!startStr && endStr) {
+          // Suffix format: bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
+          const suffixLength = parseInt(endStr, 10);
+          if (isNaN(suffixLength) || suffixLength <= 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header suffix"));
+          }
+          start = Math.max(0, fileSize - suffixLength);
+          end = fileSize - 1;
+        } else if (startStr && !endStr) {
+          // Prefix format: bytes=start- (from start to end of file)
+          start = parseInt(startStr, 10);
+          if (isNaN(start) || start < 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header start"));
+          }
+          end = fileSize - 1;
+        } else if (startStr && endStr) {
+          // Full range: bytes=start-end
+          start = parseInt(startStr, 10);
+          end = parseInt(endStr, 10);
+          if (isNaN(start) || isNaN(end) || start < 0 || end < 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
+          }
+        } else {
+          // Both empty - invalid
           c.status(400);
           return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
         }
-        const start = parseInt(startStr, 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        
         const chunkSize = end - start + 1;
         
         // Validate range
@@ -408,7 +641,6 @@ if (import.meta.main) {
         }
         
         // Return 206 Partial Content with Range headers
-        c.status(206);
         c.header("Content-Range", `bytes ${start}-${end}/${fileSize}`);
         c.header("Content-Length", chunkSize.toString());
         c.header("Accept-Ranges", "bytes");
@@ -416,8 +648,8 @@ if (import.meta.main) {
         // Stream only the requested byte range without loading entire file into memory
         // Use Bun.file().slice() for efficient range requests
         const slicedFile = file.slice(start, end + 1);
-        // Create Response with proper headers
-        const response = new Response(slicedFile);
+        // Create Response with proper headers and status code
+        const response = new Response(slicedFile, { status: 206 });
         // Copy headers from context
         c.res.headers.forEach((value, key) => {
           response.headers.set(key, value);
@@ -472,15 +704,46 @@ if (import.meta.main) {
       }
       
       // Support Range requests (required for iOS AVPlayer)
+      // RFC 7233 formats: bytes=start-end, bytes=start-, bytes=-suffix
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
         const startStr = parts[0];
-        if (!startStr) {
+        const endStr = parts[1];
+        
+        let start: number;
+        let end: number;
+        
+        if (!startStr && endStr) {
+          // Suffix format: bytes=-suffix (e.g., bytes=-500 for last 500 bytes)
+          const suffixLength = parseInt(endStr, 10);
+          if (isNaN(suffixLength) || suffixLength <= 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header suffix"));
+          }
+          start = Math.max(0, fileSize - suffixLength);
+          end = fileSize - 1;
+        } else if (startStr && !endStr) {
+          // Prefix format: bytes=start- (from start to end of file)
+          start = parseInt(startStr, 10);
+          if (isNaN(start) || start < 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header start"));
+          }
+          end = fileSize - 1;
+        } else if (startStr && endStr) {
+          // Full range: bytes=start-end
+          start = parseInt(startStr, 10);
+          end = parseInt(endStr, 10);
+          if (isNaN(start) || isNaN(end) || start < 0 || end < 0) {
+            c.status(400);
+            return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
+          }
+        } else {
+          // Both empty - invalid
           c.status(400);
           return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
         }
-        const start = parseInt(startStr, 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        
         const chunkSize = end - start + 1;
         
         // Validate range
@@ -491,7 +754,6 @@ if (import.meta.main) {
         }
         
         // Return 206 Partial Content with Range headers
-        c.status(206);
         c.header("Content-Range", `bytes ${start}-${end}/${fileSize}`);
         c.header("Content-Length", chunkSize.toString());
         c.header("Accept-Ranges", "bytes");
@@ -499,8 +761,8 @@ if (import.meta.main) {
         // Stream only the requested byte range without loading entire file into memory
         // Use Bun.file().slice() for efficient range requests
         const slicedFile = file.slice(start, end + 1);
-        // Create Response with proper headers
-        const response = new Response(slicedFile);
+        // Create Response with proper headers and status code
+        const response = new Response(slicedFile, { status: 206 });
         // Copy headers from context
         c.res.headers.forEach((value, key) => {
           response.headers.set(key, value);

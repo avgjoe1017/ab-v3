@@ -17,4 +17,6 @@ export { BottomSheet } from "./BottomSheet";
 export { PlayerMenu } from "./PlayerMenu";
 export { SaveMixPresetSheet } from "./SaveMixPresetSheet";
 export { PrimerAnimation } from "./PrimerAnimation";
+export { ScienceCard } from "./ScienceCard";
+export type { ScienceCardData } from "./ScienceCard";
 

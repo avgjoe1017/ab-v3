@@ -21,3 +21,16 @@ export async function apiPost<T>(path: string, body: any): Promise<T> {
   }
   return (await res.json()) as T;
 }
+
+export async function apiPut<T>(path: string, body: any): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return (await res.json()) as T;
+}

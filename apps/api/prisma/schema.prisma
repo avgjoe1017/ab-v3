@@ -10,6 +10,7 @@ datasource db {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
+  struggle  String?  // Optional: what user is working on (e.g., "I'm dealing with imposter syndrome")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -17,6 +18,7 @@ model User {
   sessions     Session[]
   entitlementState EntitlementState?
   entitlementEvents EntitlementEvent[]
+  values         UserValue[]
 }
 
 model Preferences {
@@ -40,6 +42,8 @@ model Session {
   pace      String?
   affirmationSpacingMs Int?
   affirmationsHash String
+  frequencyHz Float?  // Binaural beat frequency in Hz (e.g., 10.0 for Alpha)
+  brainwaveState String? // "Delta" | "Theta" | "Alpha" | "SMR" | "Beta"
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -123,4 +127,19 @@ model Job {
   error     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserValue {
+  id        String   @id @default(uuid())
+  userId    String
+  valueId   String   // Value identifier (e.g., "achievement", "connection")
+  valueText String   // Display text (e.g., "Achievement & Success")
+  rank      Int?     // Ranking (1 = highest priority, null = unranked)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, rank])
 }

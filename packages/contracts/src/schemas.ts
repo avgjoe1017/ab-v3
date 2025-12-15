@@ -50,6 +50,8 @@ export const SessionV3Schema = z.object({
   voiceId: z.string().min(1),
   pace: z.literal("slow"),
   // affirmationSpacingMs: z.number().int().min(0), // Removed
+  frequencyHz: z.number().optional(), // Phase 4.1: Binaural frequency
+  brainwaveState: z.enum(["Delta", "Theta", "Alpha", "SMR", "Beta"]).optional(), // Phase 4.1: Brainwave state
   audio: z.object({
     affirmationsMergedUrl: z.string().url(),
     affirmationsHash: z.string().min(1),

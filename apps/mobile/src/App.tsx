@@ -14,6 +14,7 @@ import ProgramDetailScreen from "./screens/ProgramDetailScreen";
 import LibraryScreen from "./screens/LibraryScreen";
 import SessionDetailScreen from "./screens/SessionDetailScreen";
 import OnboardingFlow from "./screens/OnboardingFlow";
+import SettingsScreen from "./screens/SettingsScreen";
 import { useProgramTracking } from "./hooks/useProgramTracking";
 import { useRecentTracking } from "./hooks/useRecentTracking";
 import { isOnboardingComplete } from "./storage/onboarding";
@@ -40,6 +41,7 @@ function MainApp() {
             <Stack.Screen name="ProgramDetail" component={ProgramDetailScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Library" component={LibraryScreen} options={{ headerShown: false }} />
             <Stack.Screen name="SessionDetail" component={SessionDetailScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

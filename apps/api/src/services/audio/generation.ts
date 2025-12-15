@@ -11,6 +11,7 @@ import { promisify } from "util";
 import { generateTTSAudio } from "./tts";
 import { measureLoudness } from "./loudness";
 import { generateVoiceActivitySegments } from "./voiceActivity";
+import { generateAffirmations } from "../affirmation-generator";
 const execFileAsync = promisify(execFile);
 
 // Temporary fix for simple imports if contracts export isn't fully set up with types in this context
@@ -238,10 +239,83 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
 
     const session = await prisma.session.findUnique({
         where: { id: sessionId },
-        include: { affirmations: { orderBy: { idx: "asc" } } },
+        include: { 
+            affirmations: { orderBy: { idx: "asc" } },
+            ownerUser: {
+                include: {
+                    values: {
+                        orderBy: { rank: "asc" },
+                        take: 5, // Top 5 values
+                    },
+                },
+            },
+        },
     });
 
     if (!session) throw new Error("Session not found");
+
+    // Phase 1.1: Generate affirmations if they don't exist
+    if (!session.affirmations || session.affirmations.length === 0) {
+        console.log(`[Audio] No affirmations found, generating with AI...`);
+        
+        // Get user values if available
+        const userValues = session.ownerUser?.values?.map(v => v.valueText) || [];
+        
+        // Get user struggle if available
+        const userStruggle = session.ownerUser?.struggle || undefined;
+        
+        // Determine session type from goalTag or title
+        const sessionType = session.goalTag || 
+            (session.title.toLowerCase().includes("focus") ? "Focus" :
+             session.title.toLowerCase().includes("sleep") ? "Sleep" :
+             session.title.toLowerCase().includes("meditate") ? "Meditate" :
+             session.title.toLowerCase().includes("anxiety") ? "Anxiety Relief" :
+             "Meditate"); // Default
+
+        try {
+            // Generate affirmations
+            const generated = await generateAffirmations({
+                values: userValues,
+                sessionType,
+                struggle: userStruggle,
+                count: 4, // Default to 4 affirmations
+            });
+
+            // Save affirmations to database
+            await prisma.sessionAffirmation.createMany({
+                data: generated.affirmations.map((text, idx) => ({
+                    sessionId: session.id,
+                    idx,
+                    text,
+                })),
+            });
+
+            // Update session hash
+            const newHash = hashContent(generated.affirmations.join("|"));
+            await prisma.session.update({
+                where: { id: sessionId },
+                data: { affirmationsHash: newHash },
+            });
+
+            console.log(`[Audio] ✅ Generated ${generated.affirmations.length} affirmations`);
+            
+            // Reload session with new affirmations
+            const updatedSession = await prisma.session.findUnique({
+                where: { id: sessionId },
+                include: { affirmations: { orderBy: { idx: "asc" } } },
+            });
+            
+            if (!updatedSession || !updatedSession.affirmations.length) {
+                throw new Error("Failed to save generated affirmations");
+            }
+            
+            // Use updated session for rest of processing
+            session.affirmations = updatedSession.affirmations;
+        } catch (error) {
+            console.error(`[Audio] ❌ Failed to generate affirmations:`, error);
+            throw new Error(`Failed to generate affirmations: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
 
     // 1. Gather all chunks
     const filePaths: string[] = [];

@@ -168,6 +168,16 @@ export default function PlayerScreen({ route, navigation }: any) {
   }, [data, error, status, engine, lastLoadedSessionId, snapshot.sessionId, snapshot.status, isGenerating]);
 
   const sessionTitle = sessionData?.title || "Deep Rest";
+  const frequencyHz = sessionData?.frequencyHz;
+  const brainwaveState = sessionData?.brainwaveState;
+  
+  // Phase 4.1: Format frequency display
+  const frequencyDisplay = frequencyHz && brainwaveState
+    ? `${brainwaveState} ${frequencyHz}Hz`
+    : frequencyHz
+    ? `${frequencyHz}Hz`
+    : null;
+  
   const isPlaying = status === "playing";
   const isPreroll = status === "preroll";
   const isPaused = status === "paused";
@@ -269,7 +279,11 @@ export default function PlayerScreen({ route, navigation }: any) {
           <View style={styles.mainCard}>
             <View style={styles.mainCardHeader}>
               <Text style={styles.sessionTitle}>{sessionTitle}</Text>
-              <Text style={styles.sessionSubtitle}>Delta 2Hz · 30 min</Text>
+              {frequencyDisplay && (
+                <Text style={styles.sessionSubtitle}>
+                  Currently playing: {frequencyDisplay} waves
+                </Text>
+              )}
             </View>
 
             {/* Audio Visualization */}

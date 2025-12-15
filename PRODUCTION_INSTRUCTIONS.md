@@ -1,115 +1,187 @@
-# Production Instructions
+# Production Deployment Instructions
 
-This document contains instructions for deploying and running the Affirmation Beats V3 application in production.
+**Last Updated**: January 2025  
+**Status**: In Progress - Phase 6 Implementation
 
-## Pre-roll Atmosphere Asset
+---
 
-### Asset Location
-The pre-roll atmosphere audio asset is located at:
-- `apps/mobile/assets/audio/preroll_atmosphere.m4a`
+## Phase 6: Production Readiness Checklist
 
-### Asset Loading
-The asset is loaded via Expo's Asset API in the AudioEngine. The require() path is resolved by Metro bundler at build time.
+### Phase 6.1: Authentication ✅ Structure Ready
 
-**Important**: The asset must be included in the app bundle. Ensure:
-1. The file exists at `apps/mobile/assets/audio/preroll_atmosphere.m4a`
-2. Metro bundler includes it in the bundle (it should automatically)
-3. The asset is accessible offline (bundled assets are always available)
+**Status**: Foundation implemented, ready for Clerk integration
 
-### Regenerating the Asset
+**What's Done**:
+- ✅ Created `apps/api/src/lib/auth.ts` with `getUserId()` helper
+- ✅ Created `apps/api/src/middleware/auth.ts` with authentication middleware
+- ✅ Structured code to easily replace default user ID with real auth
 
-If you need to regenerate or adjust the pre-roll asset:
+**What's Needed**:
+- [ ] Install Clerk backend SDK: `pnpm add @clerk/backend`
+- [ ] Set up Clerk account and create application
+- [ ] Add environment variables:
+  ```bash
+  CLERK_PUBLISHABLE_KEY=pk_...
+  CLERK_SECRET_KEY=sk_...
+  ```
+- [ ] Update `getUserId()` in `apps/api/src/lib/auth.ts` to verify Clerk tokens
+- [ ] Replace all `DEFAULT_USER_ID` references with `getUserId(c)`
+- [ ] Add `requireAuthMiddleware` to all `/me/*` endpoints
+- [ ] Install Clerk in mobile app: `pnpm add @clerk/clerk-expo`
+- [ ] Set up Clerk provider in mobile app
+- [ ] Update API calls to include Authorization header with Clerk token
 
+**Files to Update**:
+- `apps/api/src/index.ts` - Replace DEFAULT_USER_ID in all endpoints (16 instances)
+- `apps/api/src/lib/auth.ts` - Implement Clerk token verification
+- `apps/mobile/src/App.tsx` - Add ClerkProvider
+- `apps/mobile/src/lib/api.ts` - Add Authorization header to API calls
+
+---
+
+### Phase 6.2: Database Migration
+
+**Status**: Not Started
+
+**What's Needed**:
+- [ ] Create Supabase project and Postgres database
+- [ ] Update `DATABASE_URL` environment variable
+- [ ] Update Prisma schema if needed (SQLite → Postgres compatibility check)
+- [ ] Create data migration script
+- [ ] Test migration with sample data
+- [ ] Update connection pooling settings
+- [ ] Set up database backups
+
+**Migration Script Location**: `apps/api/prisma/migrate-to-postgres.ts` (to be created)
+
+---
+
+### Phase 6.3: Payments (RevenueCat)
+
+**Status**: Not Started
+
+**What's Needed**:
+- [ ] Create RevenueCat account and project
+- [ ] Configure products in App Store Connect
+- [ ] Configure products in Google Play Console
+- [ ] Install RevenueCat SDK: `pnpm add react-native-purchases`
+- [ ] Set up RevenueCat webhook endpoint
+- [ ] Update `getEntitlement()` to check RevenueCat subscriptions
+- [ ] Create subscription management UI
+- [ ] Test subscription flow end-to-end
+
+**Files to Update**:
+- `apps/api/src/services/entitlements.ts` - Add RevenueCat subscription checks
+- `apps/mobile/src/hooks/useEntitlement.ts` - Add RevenueCat SDK integration
+
+---
+
+### Phase 6.4: Cloud Storage (S3 + CloudFront)
+
+**Status**: Not Started
+
+**What's Needed**:
+- [ ] Create AWS account and S3 bucket
+- [ ] Set up CloudFront distribution
+- [ ] Configure IAM roles and policies
+- [ ] Install AWS SDK: `pnpm add @aws-sdk/client-s3 @aws-sdk/s3-request-presigner`
+- [ ] Create S3 upload service
+- [ ] Update audio generation to upload to S3
+- [ ] Update audio URL construction to use CloudFront URLs
+- [ ] Add environment variables:
+  ```bash
+  AWS_ACCESS_KEY_ID=...
+  AWS_SECRET_ACCESS_KEY=...
+  AWS_S3_BUCKET_NAME=...
+  AWS_REGION=us-east-1
+  CLOUDFRONT_DOMAIN=...
+  ```
+- [ ] Set up lifecycle policies for old audio files
+
+**Files to Update**:
+- `apps/api/src/services/audio/generation.ts` - Upload to S3 after generation
+- `apps/api/src/services/audio/stitching.ts` - Upload stitched files to S3
+- `apps/api/src/index.ts` - Update URL construction for CloudFront
+
+---
+
+## Environment Variables Required
+
+### Development
 ```bash
-# From project root
-cd apps/api
-bun scripts/generate-preroll.ts
+# Database
+DATABASE_URL="file:./dev.db"
+
+# API
+PORT=8787
+NODE_ENV=development
 ```
 
-The script will:
-- Generate pink/brown noise mix
-- Apply spectral shaping filters
-- Normalize to target loudness
-- Output to `apps/mobile/assets/audio/preroll_atmosphere.m4a`
-
-### Loudness Adjustment
-
-To fine-tune the loudness to exactly -38 LUFS:
-
-1. Edit `apps/api/scripts/generate-preroll.ts`
-2. Adjust the `volume=-40dB` parameter (line ~60)
-3. Regenerate: `bun apps/api/scripts/generate-preroll.ts`
-4. Rebuild the mobile app
-
-**Note**: The current setting is -40 dB, which should be close to -38 LUFS. Use audio analysis tools to verify exact loudness if needed.
-
-## Testing Pre-roll Functionality
-
-See `apps/mobile/TESTING_GUIDE.md` for comprehensive testing instructions.
-
-### Quick Test Checklist
-
-1. ✅ Pre-roll starts within 300ms of Play tap
-2. ✅ Smooth crossfade to main mix (no clicks/pops)
-3. ✅ Pause/Resume/Stop work during pre-roll
-4. ✅ No "intro" feeling (should feel like stepping into environment)
-5. ✅ Volume is subtle (max 10% runtime, -38 LUFS target)
-
-## Build Process
-
-### Mobile App Build
-
+### Production
 ```bash
-# Development
-pnpm -C apps/mobile start
+# Authentication
+CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
 
-# Production build (iOS)
-pnpm -C apps/mobile ios --configuration Release
+# Database
+DATABASE_URL=postgresql://user:password@host:5432/database
 
-# Production build (Android)
-pnpm -C apps/mobile android --configuration Release
+# Payments
+REVENUECAT_API_KEY=...
+
+# Cloud Storage
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_S3_BUCKET_NAME=entrain-audio-prod
+AWS_REGION=us-east-1
+CLOUDFRONT_DOMAIN=d1234abcdef.cloudfront.net
+
+# API
+PORT=8787
+NODE_ENV=production
 ```
 
-### API Server Build
+---
 
-```bash
-# Development
-pnpm -C apps/api dev
+## Deployment Steps
 
-# Production (requires Docker/containerization)
-# See deployment docs for container setup
-```
+1. **Set up infrastructure** (Supabase, AWS, RevenueCat, Clerk)
+2. **Configure environment variables** in production environment
+3. **Run database migrations**: `pnpm -C apps/api prisma migrate deploy`
+4. **Build API**: `pnpm -C apps/api build`
+5. **Deploy API** (Cloudflare Workers, Vercel, Railway, etc.)
+6. **Build mobile app**: `pnpm -C apps/mobile build`
+7. **Submit to App Stores** (App Store Connect, Google Play Console)
 
-## Environment Variables
+---
 
-### API Server
-- `DATABASE_URL` - SQLite/Postgres connection string
-- `PORT` - Server port (default: 8787)
+## Testing Checklist
 
-### Mobile App
-- `API_BASE_URL` - API server URL (default: http://10.0.2.2:3000 for Android emulator)
+- [ ] Authentication works for all protected endpoints
+- [ ] Database migration completed with zero data loss
+- [ ] Subscriptions work end-to-end (purchase, renewal, cancellation)
+- [ ] Audio files upload to S3 and serve from CloudFront
+- [ ] All environment variables are set correctly
+- [ ] Error handling works for auth failures
+- [ ] Rate limiting works (if implemented)
 
-## Asset Verification
+---
 
-Before deploying, verify the pre-roll asset:
-1. File exists: `apps/mobile/assets/audio/preroll_atmosphere.m4a`
-2. File size: ~200-300 KB (12 seconds, M4A, 128kbps)
-3. Asset loads in app (check console for errors)
+## Rollback Plan
 
-## Troubleshooting
+If issues occur in production:
 
-### Pre-roll doesn't play
-- Check console for asset loading errors
-- Verify file exists in bundle
-- Check Metro bundler includes the asset
+1. **Authentication issues**: Switch back to default user ID temporarily
+2. **Database issues**: Restore from backup, rollback migration
+3. **Payment issues**: Disable subscription checks, allow all users free tier
+4. **Storage issues**: Fall back to local file storage temporarily
 
-### Pre-roll too loud/quiet
-- Regenerate with adjusted volume parameter
-- Rebuild app
-- Test on device (simulator may have different audio characteristics)
+---
 
-### Asset not found errors
-- Ensure asset is in correct location
-- Check Metro bundler configuration
-- Verify require() path in AudioEngine
+## Resources
 
+- [Clerk Documentation](https://clerk.com/docs)
+- [Supabase Documentation](https://supabase.com/docs)
+- [RevenueCat Documentation](https://docs.revenuecat.com)
+- [AWS S3 Documentation](https://docs.aws.amazon.com/s3/)
+- [CloudFront Documentation](https://docs.aws.amazon.com/cloudfront/)
