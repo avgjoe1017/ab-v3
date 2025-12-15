@@ -81,6 +81,14 @@ export const PlaybackBundleVMSchema = z.object({
     backgroundLUFS: z.number().optional(),
     binauralLUFS: z.number().optional(),
   }).optional(),
+  voiceActivity: z.object({
+    segments: z.array(z.object({
+      startMs: z.number().int().min(0),
+      endMs: z.number().int().min(0),
+    })),
+    thresholdDb: z.number().optional(),
+    minSilenceMs: z.number().optional(),
+  }).optional(),
 });
 
 export type PlaybackBundleVM = z.infer<typeof PlaybackBundleVMSchema>;

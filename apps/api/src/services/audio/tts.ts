@@ -219,12 +219,18 @@ async function generateElevenLabsTTS(
  * Default to calm, neutral voices
  */
 function mapVoiceIdToElevenLabs(voiceId: string): string {
-  // Default ElevenLabs voice IDs (calm, neutral voices)
-  // These are example IDs - replace with actual voice IDs from your ElevenLabs account
+  // ElevenLabs voice IDs (calm, neutral voices)
+  // Map common voice names to ElevenLabs voice IDs
   const voiceMap: Record<string, string> = {
     "default": "21m00Tcm4TlvDq8ikWAM", // Rachel - calm, neutral
     "male": "pNInz6obpgDQGcFmaJgB", // Adam - calm, neutral
     "female": "21m00Tcm4TlvDq8ikWAM", // Rachel
+    "alloy": "pNInz6obpgDQGcFmaJgB", // Adam - calm, steady
+    "onyx": "pNInz6obpgDQGcFmaJgB", // Adam - strong, confident
+    "shimmer": "21m00Tcm4TlvDq8ikWAM", // Rachel - gentle, supportive
+    "nova": "21m00Tcm4TlvDq8ikWAM", // Rachel
+    "echo": "pNInz6obpgDQGcFmaJgB", // Adam
+    "fable": "21m00Tcm4TlvDq8ikWAM", // Rachel
   };
 
   return voiceMap[voiceId.toLowerCase()] || "21m00Tcm4TlvDq8ikWAM";

@@ -4,7 +4,9 @@ import crypto from "crypto";
 import { UUID, PlaybackBundleVMSchema, type ApiError, DraftSessionSchema, SessionV3Schema } from "@ab/contracts";
 import { PrismaClient } from "@prisma/client";
 import path from "path";
-import { createJob, triggerJobProcessing, getJob } from "./services/jobs";
+import fs from "fs";
+import { createReadStream } from "fs";
+import { createJob, getJob, registerJobProcessor, startJobWorker } from "./services/jobs";
 import { processEnsureAudioJob } from "./services/audio/generation";
 import { getEntitlement } from "./services/entitlements";
 
@@ -38,10 +40,13 @@ app.get("/me/entitlement", async (c) => {
 // ---- SESSIONS ----
 
 app.get("/sessions", async (c) => {
+  // V3: Return lightweight list without durationSec (sessions are infinite)
   const sessions = await prisma.session.findMany({
     orderBy: { createdAt: "desc" },
-    select: { id: true, title: true, durationSec: true }, // Lightweight list
+    select: { id: true, title: true, goalTag: true }, // Lightweight list
   });
+  console.log("[API] GET /sessions - Returning", sessions.length, "sessions");
+  console.log("[API] Session goalTags:", sessions.map(s => ({ title: s.title, goalTag: s.goalTag })));
   return c.json({ sessions });
 });
 
@@ -114,9 +119,9 @@ app.post("/sessions", async (c) => {
 
   // Automatically trigger audio generation for "Auto-Generate" UX
   // This is an async operation, the client will poll /jobs/:id
+  // Worker loop will pick up the job automatically
   try {
-    const job = await createJob("ensure-audio", { sessionId: session.id });
-    triggerJobProcessing(job.id, processEnsureAudioJob);
+    await createJob("ensure-audio", { sessionId: session.id });
   } catch (jobError) {
     // Log but don't fail the session creation if job creation fails
     console.error("[API] Failed to create audio generation job:", jobError);
@@ -160,29 +165,34 @@ app.get("/sessions/:id", async (c) => {
 
   if (!session) return c.json(error("NOT_FOUND", "Session not found"), 404);
 
-  // Map to V3
-  const sessionV3 = {
-    schemaVersion: 3,
-    id: session.id,
-    ownerUserId: session.ownerUserId,
-    source: session.source,
-    title: session.title,
-    goalTag: session.goalTag,
-    durationSec: session.durationSec,
-    affirmations: session.affirmations.map(a => a.text),
-    voiceId: session.voiceId,
-    pace: session.pace,
-    affirmationSpacingMs: session.affirmationSpacingMs,
-    createdAt: session.createdAt.toISOString(),
-    updatedAt: session.updatedAt.toISOString(),
-    audio: session.audio?.mergedAudioAsset ? {
-      affirmationsMergedUrl: `${STORAGE_PUBLIC_BASE_URL}/${path.relative(process.cwd(), session.audio.mergedAudioAsset.url)}`,
-      affirmationsHash: session.audio.mergedAudioAsset.hash,
-      generatedAt: session.audio.generatedAt.toISOString(),
-    } : undefined
-  };
-
-  return c.json(sessionV3);
+  // Map to strict SessionV3 (V3 compliance: no durationSec, pace is always "slow", no affirmationSpacingMs)
+  try {
+    const sessionV3 = SessionV3Schema.parse({
+      schemaVersion: 3,
+      id: session.id,
+      ownerUserId: session.ownerUserId,
+      source: session.source as "catalog" | "user" | "generated",
+      title: session.title,
+      goalTag: session.goalTag ?? undefined,
+      // durationSec removed in V3 (infinite sessions)
+      affirmations: session.affirmations.map(a => a.text),
+      voiceId: session.voiceId,
+      pace: "slow", // V3: pace is always "slow"
+      // affirmationSpacingMs removed in V3 (fixed internally)
+      createdAt: session.createdAt.toISOString(),
+      updatedAt: session.updatedAt.toISOString(),
+      audio: session.audio?.mergedAudioAsset ? {
+        affirmationsMergedUrl: `${STORAGE_PUBLIC_BASE_URL}/${path.relative(process.cwd(), session.audio.mergedAudioAsset.url)}`,
+        affirmationsHash: session.audio.mergedAudioAsset.hash,
+        generatedAt: session.audio.generatedAt.toISOString(),
+      } : undefined
+    });
+    
+    return c.json(sessionV3);
+  } catch (parseError) {
+    console.error("[API] Failed to parse SessionV3:", parseError);
+    return c.json(error("INTERNAL_ERROR", "Failed to serialize session response", parseError), 500);
+  }
 });
 
 // ---- ensure-audio (Job Trigger) ----
@@ -194,14 +204,10 @@ app.post("/sessions/:id/ensure-audio", async (c) => {
   const existing = await prisma.sessionAudio.findUnique({ where: { sessionId: parsed.data.id } });
   if (existing) return c.json({ status: "ready" });
 
-  // Create Job
-  const { createJob, triggerJobProcessing } = await import("./services/jobs");
-  const { processEnsureAudioJob } = await import("./services/audio/generation");
+  // Create Job - worker loop will pick it up automatically
+  const { createJob } = await import("./services/jobs");
 
   const job = await createJob("ensure-audio", { sessionId: parsed.data.id });
-
-  // Trigger async (in real world, strict async. here we trigger)
-  triggerJobProcessing(job.id, processEnsureAudioJob);
 
   return c.json({ status: "pending", jobId: job.id });
 });
@@ -238,34 +244,26 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
     const protocol = c.req.header("x-forwarded-proto") || "http";
     const apiBaseUrl = `${protocol}://${host}`;
     
-    // Set API_BASE_URL env var temporarily for asset functions
-    const originalApiBaseUrl = process.env.API_BASE_URL;
-    process.env.API_BASE_URL = apiBaseUrl;
-    
     const { getBinauralAsset, getBackgroundAsset } = await import("./services/audio/assets");
     
     // Get real asset URLs (platform-aware) with error handling
+    // Pass apiBaseUrl as argument instead of mutating process.env
     let binaural;
     let background;
     
     try {
-      binaural = await getBinauralAsset(10); // Default to 10Hz alpha
+      binaural = await getBinauralAsset(10, apiBaseUrl); // Default to 10Hz alpha
     } catch (binauralError: any) {
       console.error("[API] Failed to get binaural asset:", binauralError);
-      process.env.API_BASE_URL = originalApiBaseUrl; // Restore
       return c.json(error("ASSET_ERROR", `Binaural asset not available: ${binauralError.message}`, binauralError), 500);
     }
     
     try {
-      background = await getBackgroundAsset(); // Default background
+      background = await getBackgroundAsset(undefined, apiBaseUrl); // Default background
     } catch (backgroundError: any) {
       console.error("[API] Failed to get background asset:", backgroundError);
-      process.env.API_BASE_URL = originalApiBaseUrl; // Restore
       return c.json(error("ASSET_ERROR", `Background asset not available: ${backgroundError.message}`, backgroundError), 500);
     }
-    
-    // Restore original API_BASE_URL
-    process.env.API_BASE_URL = originalApiBaseUrl;
     
     // Construct affirmations URL (serve from storage)
     if (!session.audio.mergedAudioAsset?.url) {
@@ -296,6 +294,35 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
       ? affirmationsUrlRelative 
       : `${protocol}://${host}${affirmationsUrlRelative}`;
 
+    // Parse loudness and voiceActivity from metaJson if available
+    let loudness: { affirmationsLUFS?: number; backgroundLUFS?: number; binauralLUFS?: number } | undefined;
+    let voiceActivity: { segments: Array<{ startMs: number; endMs: number }>; thresholdDb?: number; minSilenceMs?: number } | undefined;
+    
+    if (session.audio.mergedAudioAsset?.metaJson) {
+      try {
+        const meta = JSON.parse(session.audio.mergedAudioAsset.metaJson);
+        if (meta.loudness) {
+          loudness = {
+            affirmationsLUFS: meta.loudness.input_i,
+            // Background and binaural loudness will be measured separately
+            // For now, we only measure affirmations during generation
+          };
+        }
+        if (meta.voiceActivity && meta.voiceActivity.segments) {
+          voiceActivity = {
+            segments: meta.voiceActivity.segments.map((seg: any) => ({
+              startMs: Math.round(seg.startMs),
+              endMs: Math.round(seg.endMs),
+            })),
+            thresholdDb: meta.voiceActivity.thresholdDb,
+            minSilenceMs: meta.voiceActivity.minSilenceMs,
+          };
+        }
+      } catch (e) {
+        console.warn("[API] Failed to parse metaJson:", e);
+      }
+    }
+
     try {
       const bundle = PlaybackBundleVMSchema.parse({
         sessionId: session.id,
@@ -304,6 +331,8 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
         binaural,
         mix: { affirmations: 1, binaural: 0.3, background: 0.3 }, // Default to 30% for binaural and background
         effectiveAffirmationSpacingMs: session.affirmationSpacingMs ?? 3000, // Default to 3s if null
+        loudness, // Include loudness measurements if available
+        voiceActivity, // Include voice activity segments for ducking
       });
 
       return c.json({ bundle });
@@ -324,35 +353,39 @@ if (import.meta.main) {
   const port = Number(process.env.PORT ?? 8787);
   console.log(`[api] listening on http://localhost:${port}`);
 
-  // Serve storage directory strictly for dev
-  // In production, upload to S3.
-  const { serveStatic } = await import("hono/bun");
-  const PROJECT_ROOT = path.resolve(process.cwd(), "..", ".."); // Go up from apps/api to project root
-  app.use("/storage/*", serveStatic({ root: "./" })); // serves ./storage/...
-  
-  // Custom handler for /assets/* with Range request support (required for iOS .m4a streaming)
+  // Register job processors
+  const { registerJobProcessor } = await import("./services/jobs");
+  const { processEnsureAudioJob } = await import("./services/audio/generation");
+  registerJobProcessor("ensure-audio", processEnsureAudioJob);
+
+  // Start job worker loop (restart-safe, picks up pending jobs)
+  const { startJobWorker } = await import("./services/jobs");
+  await startJobWorker(2000); // Poll every 2 seconds
+
+  // Custom handler for /storage/* with Range request support (required for iOS .m4a streaming)
   // Bun's serveStatic doesn't support Range requests, so we implement it manually
-  app.use("/assets/*", async (c) => {
+  app.use("/storage/*", async (c) => {
     const url = new URL(c.req.url);
-    // Decode URL-encoded path segments (e.g., "Babbling%20Brook.m4a" -> "Babbling Brook.m4a")
-    const requestPath = decodeURIComponent(url.pathname.replace("/assets/", ""));
-    const filePath = path.resolve(PROJECT_ROOT, "assets", requestPath);
+    const requestPath = url.pathname.replace("/storage/", "");
+    const filePath = path.resolve(process.cwd(), "storage", requestPath);
     
     try {
       const file = Bun.file(filePath);
       const exists = await file.exists();
       
       if (!exists) {
-        return c.notFound();
+        return c.json(error("NOT_FOUND", `File not found: ${requestPath}`), 404);
       }
       
       const stats = await file.stat();
       const fileSize = stats.size;
       const range = c.req.header("range");
       
-      // Set proper Content-Type for .m4a files
+      // Set proper Content-Type based on file extension
       if (filePath.endsWith(".m4a")) {
         c.header("Content-Type", "audio/mp4");
+      } else if (filePath.endsWith(".mp3")) {
+        c.header("Content-Type", "audio/mpeg");
       }
       
       // Support Range requests (required for iOS AVPlayer)
@@ -375,10 +408,74 @@ if (import.meta.main) {
         c.header("Content-Length", chunkSize.toString());
         c.header("Accept-Ranges", "bytes");
         
-        // Read and stream the chunk
-        const fileHandle = await Bun.file(filePath).arrayBuffer();
-        const chunk = fileHandle.slice(start, end + 1);
-        return c.body(chunk);
+        // Stream only the requested byte range without loading entire file into memory
+        const stream = createReadStream(filePath, { start, end });
+        return c.body(stream);
+      } else {
+        // No Range header - return full file
+        c.header("Content-Length", fileSize.toString());
+        c.header("Accept-Ranges", "bytes");
+        return c.body(file);
+      }
+    } catch (error) {
+      console.error("[API] Error serving storage file:", error);
+      return c.json(error("INTERNAL_ERROR", "Failed to serve file", error), 500);
+    }
+  });
+  
+  // Custom handler for /assets/* with Range request support (required for iOS .m4a streaming)
+  // Bun's serveStatic doesn't support Range requests, so we implement it manually
+  const PROJECT_ROOT = path.resolve(process.cwd(), "..", ".."); // Go up from apps/api to project root
+  app.use("/assets/*", async (c) => {
+    const url = new URL(c.req.url);
+    // Decode URL-encoded path segments (e.g., "Babbling%20Brook.m4a" -> "Babbling Brook.m4a")
+    const requestPath = decodeURIComponent(url.pathname.replace("/assets/", ""));   
+    // Assets are in apps/assets/, so go up one level from api to apps, then into assets
+    const filePath = path.resolve(process.cwd(), "..", "assets", requestPath);
+    
+    try {
+      const file = Bun.file(filePath);
+      const exists = await file.exists();
+      
+      if (!exists) {
+        return c.notFound();
+      }
+      
+      const stats = await file.stat();
+      const fileSize = stats.size;
+      const range = c.req.header("range");
+      
+      // Set proper Content-Type based on file extension
+      if (filePath.endsWith(".m4a")) {
+        c.header("Content-Type", "audio/mp4");
+      } else if (filePath.endsWith(".mp3")) {
+        c.header("Content-Type", "audio/mpeg");
+      }
+      
+      // Support Range requests (required for iOS AVPlayer)
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunkSize = end - start + 1;
+        
+        // Validate range
+        if (start >= fileSize || end >= fileSize || start > end) {
+          c.status(416); // Range Not Satisfiable
+          c.header("Content-Range", `bytes */${fileSize}`);
+          return c.body(null);
+        }
+        
+        // Return 206 Partial Content with Range headers
+        c.status(206);
+        c.header("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        c.header("Content-Length", chunkSize.toString());
+        c.header("Accept-Ranges", "bytes");
+        
+        // Stream only the requested byte range without loading entire file into memory
+        // Use fs.createReadStream with start/end options for efficient streaming
+        const stream = createReadStream(filePath, { start, end });
+        return c.body(stream);
       } else {
         // No Range header - return full file
         c.header("Content-Length", fileSize.toString());

@@ -1,76 +1,76 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { Asset } from "expo-asset";
 import HomeScreen from "./screens/HomeScreen";
 import ExploreScreen from "./screens/ExploreScreen";
 import PlayerScreen from "./screens/PlayerScreen";
 import EditorScreen from "./screens/EditorScreen";
-import { AudioDebugger } from "./components/AudioDebugger";
-import { TestDataHelper } from "./components/TestDataHelper";
-import { getAudioEngine } from "@ab/audio-engine";
+import SOSScreen from "./screens/SOSScreen";
+import ProgramsListScreen from "./screens/ProgramsListScreen";
+import ProgramDetailScreen from "./screens/ProgramDetailScreen";
+import LibraryScreen from "./screens/LibraryScreen";
+import SessionDetailScreen from "./screens/SessionDetailScreen";
+import OnboardingFlow from "./screens/OnboardingFlow";
+import { useProgramTracking } from "./hooks/useProgramTracking";
+import { useRecentTracking } from "./hooks/useRecentTracking";
+import { isOnboardingComplete } from "./storage/onboarding";
 
 const Stack = createNativeStackNavigator();
 const queryClient = new QueryClient();
 
+function MainApp() {
+  // Track program progress
+  useProgramTracking();
+  // Track recent sessions
+  useRecentTracking();
+
+  return (
+    <NavigationContainer>
+      <StatusBar style="auto" />
+      <Stack.Navigator>
+        <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Explore" component={ExploreScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Editor" component={EditorScreen} />
+            <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="SOS" component={SOSScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ProgramsList" component={ProgramsListScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ProgramDetail" component={ProgramDetailScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="Library" component={LibraryScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="SessionDetail" component={SessionDetailScreen} options={{ headerShown: false }} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
 export default function App() {
-  // Initialize preroll asset URI in AudioEngine on app start
-  useEffect(() => {
-    const initializePrerollAsset = async () => {
-      try {
-        // Asset is in apps/mobile/assets/audio/, so from src/ we need to go up one level
-        // @ts-ignore - Metro will resolve this asset
-        const assetModule = require("../assets/audio/preroll_atmosphere.m4a");
-        const asset = Asset.fromModule(assetModule);
-        await asset.downloadAsync();
-        const uri = asset.localUri || asset.uri;
-        if (!uri) {
-          throw new Error("Failed to get asset URI");
-        }
-        getAudioEngine().setPrerollAssetUri(uri);
-        console.log("[App] ✅ Preroll asset initialized:", uri);
-      } catch (error) {
-        console.error("[App] ❌ Failed to initialize preroll asset:", error);
-        // Try fallback: use the module directly if Asset API fails
-        try {
-          // @ts-ignore
-          const assetModule = require("../assets/audio/preroll_atmosphere.m4a");
-          if (typeof assetModule === 'number') {
-            // It's an asset ID
-            getAudioEngine().setPrerollAssetUri(assetModule.toString());
-            console.log("[App] ✅ Preroll asset initialized (fallback):", assetModule);
-          } else {
-            console.error("[App] ❌ Could not resolve preroll asset");
-          }
-        } catch (fallbackError) {
-          console.error("[App] ❌ Fallback also failed:", fallbackError);
-        }
-      }
-    };
-    initializePrerollAsset();
+  const [showOnboarding, setShowOnboarding] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    // Check if onboarding is complete
+    isOnboardingComplete().then((complete) => {
+      setShowOnboarding(!complete);
+    });
   }, []);
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
+
+  if (showOnboarding === null) {
+    // Loading state
+    return null;
+  }
 
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <NavigationContainer>
-          <StatusBar style="auto" />
-          <Stack.Navigator>
-            <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
-            <Stack.Screen name="Explore" component={ExploreScreen} options={{ headerShown: false }} />
-            <Stack.Screen name="Editor" component={EditorScreen} />
-            <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
-          </Stack.Navigator>
-        </NavigationContainer>
-        {/* Debug components - collapsible in development */}
-        {__DEV__ && (
-          <>
-            <AudioDebugger />
-            <TestDataHelper />
-          </>
+        {showOnboarding ? (
+          <OnboardingFlow onComplete={handleOnboardingComplete} />
+        ) : (
+          <MainApp />
         )}
       </QueryClientProvider>
     </SafeAreaProvider>

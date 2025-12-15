@@ -2,6 +2,9 @@ import { type PlaybackBundleVM } from "@ab/contracts";
 import type { AudioEngineSnapshot, Mix } from "./types";
 import { createAudioPlayer, type AudioPlayer } from "expo-audio";
 import { Platform } from "react-native";
+import { GainSmoother } from "./smoothing";
+import { VoiceActivityDucker } from "./ducking";
+import { computeTargetVolumes, equalPowerCrossfade } from "./mixer";
 
 // Pre-roll asset - this will be resolved by Metro bundler when used from mobile app
 // The actual require() happens in getPrerollAssetUri() at runtime
@@ -35,17 +38,50 @@ export class AudioEngine {
   private bgPlayer: AudioPlayer | null = null;
   private prerollPlayer: AudioPlayer | null = null; // Pre-roll atmosphere player
 
-  // Position Polling
+  // Position Polling (250ms for UI)
   private interval: ReturnType<typeof setInterval> | null = null;
+  
+  // Control Tick Loop (25ms for mixer/ducking/smoothing)
+  private controlInterval: ReturnType<typeof setInterval> | null = null;
+  private lastControlTick: number = Date.now();
   
   // Pre-roll state
   private prerollFadeOutInterval: ReturnType<typeof setInterval> | null = null;
   private currentBundle: PlaybackBundleVM | null = null;
+  
+  // Mixer components
+  private affSmoother: GainSmoother;
+  private binSmoother: GainSmoother;
+  private bgSmoother: GainSmoother;
+  private prerollSmoother: GainSmoother;
+  private ducker: VoiceActivityDucker | null = null;
+  
+  // Intro automation state
+  private sessionStartTime: number = 0;
+  private automationMultipliers = {
+    affirmations: 0,
+    binaural: 0,
+    background: 0,
+  };
+  
+  // Crossfade state
+  private crossfadeStartTime: number = 0;
+  private crossfadeDuration: number = 0;
+  private isCrossfading: boolean = false;
+  
+  // Drift correction
+  private lastDriftCheck: number = 0;
 
   constructor() {
     // Config audio module if needed (e.g. background mode)
     // For now, relies on default or app-level config
     console.log("[AudioEngine] BUILD PROOF:", AudioEngine.BUILD_PROOF);
+    
+    // Initialize gain smoothers with attack/release times
+    this.affSmoother = new GainSmoother({ attackMs: 80, releaseMs: 250 });
+    this.binSmoother = new GainSmoother({ attackMs: 80, releaseMs: 250 });
+    this.bgSmoother = new GainSmoother({ attackMs: 80, releaseMs: 250 });
+    this.prerollSmoother = new GainSmoother({ attackMs: 80, releaseMs: 250 });
   }
 
   subscribe(listener: (s: AudioEngineSnapshot) => void): () => void {
@@ -100,6 +136,178 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Start control tick loop (25ms) for mixer, ducking, smoothing
+   * Runs only when preroll or playing
+   */
+  private startControlLoop() {
+    if (this.controlInterval) return; // Already running
+    
+    this.lastControlTick = Date.now();
+    this.controlInterval = setInterval(() => {
+      this.controlTick();
+    }, 25); // 40 Hz control rate
+  }
+
+  private stopControlLoop() {
+    if (this.controlInterval) {
+      clearInterval(this.controlInterval);
+      this.controlInterval = null;
+    }
+  }
+
+  /**
+   * Control tick - updates mixer, ducking, smoothing, automation
+   * Called every 25ms when playing or prerolling
+   */
+  private controlTick(): void {
+    const now = Date.now();
+    const dtMs = now - this.lastControlTick;
+    this.lastControlTick = now;
+
+    const status = this.snapshot.status;
+    const positionMs = this.snapshot.positionMs;
+
+    // Only run control loop during preroll or playing
+    if (status !== "preroll" && status !== "playing") {
+      return;
+    }
+
+    // Update intro automation multipliers (only during initial play, not during crossfade)
+    if (this.sessionStartTime > 0 && !this.isCrossfading) {
+      const elapsed = now - this.sessionStartTime;
+      
+      // Background: 0 to 100% over 1200ms
+      this.automationMultipliers.background = Math.min(1, elapsed / 1200);
+      
+      // Binaural: 0 to 100% over 2000ms
+      this.automationMultipliers.binaural = Math.min(1, elapsed / 2000);
+      
+      // Affirmations: 0 to 100% over 900ms (with 200ms delay)
+      const affElapsed = Math.max(0, elapsed - 200);
+      this.automationMultipliers.affirmations = Math.min(1, affElapsed / 900);
+    } else if (this.isCrossfading) {
+      // During crossfade, automation is handled by crossfade curve
+      // Set to 1.0 so crossfade curve controls everything
+      this.automationMultipliers = {
+        affirmations: 1.0,
+        binaural: 1.0,
+        background: 1.0,
+      };
+    }
+
+    // Update ducking if voice activity is available
+    let duckingMultipliers = { background: 1.0, binaural: 1.0 };
+    if (this.ducker) {
+      duckingMultipliers = this.ducker.update(positionMs, dtMs);
+    }
+
+    // Compute target volumes using mixer
+    const targetVolumes = computeTargetVolumes({
+      userMix: this.snapshot.mix,
+      stateMultipliers: {
+        affirmations: (status === "playing" || status === "preroll") ? 1.0 : 0,
+        binaural: (status === "playing" || status === "preroll") ? 1.0 : 0,
+        background: (status === "playing" || status === "preroll") ? 1.0 : 0,
+      },
+      duckingMultipliers,
+      automationMultipliers: this.automationMultipliers,
+      safetyCeilings: {
+        affirmations: 1.0,
+        binaural: 1.0,
+        background: 1.0,
+      },
+    });
+
+    // Handle crossfade if active
+    if (this.isCrossfading && this.prerollPlayer) {
+      const crossfadeElapsed = now - this.crossfadeStartTime;
+      const progress = Math.min(1, crossfadeElapsed / this.crossfadeDuration);
+      
+      if (progress >= 1) {
+        // Crossfade complete
+        this.isCrossfading = false;
+        this.prerollSmoother.setTarget(0);
+        // Start intro automation now that crossfade is done
+        this.sessionStartTime = Date.now();
+        if (this.prerollPlayer) {
+          this.prerollPlayer.pause();
+          this.prerollPlayer.release();
+          this.prerollPlayer = null;
+        }
+        this.setState({ status: "playing" });
+      } else {
+        // Equal-power crossfade
+        const { main, preroll } = equalPowerCrossfade(progress);
+        
+        // Apply crossfade to main mix
+        targetVolumes.affirmations *= main;
+        targetVolumes.binaural *= main;
+        targetVolumes.background *= main;
+        
+        // Apply crossfade to preroll
+        this.prerollSmoother.setTarget(preroll * 0.10); // Cap preroll at 10%
+      }
+    }
+
+    // Update smoothers with targets
+    if (this.affPlayer) {
+      this.affSmoother.setTarget(targetVolumes.affirmations);
+      this.affPlayer.volume = this.affSmoother.update(dtMs);
+    }
+    
+    if (this.binPlayer) {
+      this.binSmoother.setTarget(targetVolumes.binaural);
+      this.binPlayer.volume = this.binSmoother.update(dtMs);
+    }
+    
+    if (this.bgPlayer) {
+      this.bgSmoother.setTarget(targetVolumes.background);
+      this.bgPlayer.volume = this.bgSmoother.update(dtMs);
+    }
+    
+    if (this.prerollPlayer) {
+      this.prerollPlayer.volume = this.prerollSmoother.update(dtMs);
+    }
+
+    // Drift correction (every 5 seconds)
+    if (status === "playing" && now - this.lastDriftCheck > 5000) {
+      this.correctDrift();
+      this.lastDriftCheck = now;
+    }
+  }
+
+  /**
+   * Drift correction - align beds to affirmations track
+   */
+  private correctDrift(): void {
+    if (!this.affPlayer || !this.binPlayer || !this.bgPlayer) return;
+
+    const affTime = this.affPlayer.currentTime;
+    const binDuration = this.binPlayer.duration || 1;
+    const bgDuration = this.bgPlayer.duration || 1;
+
+    // Check binaural drift
+    const binTime = this.binPlayer.currentTime;
+    const binExpected = affTime % binDuration;
+    const binDrift = Math.abs(binTime - binExpected);
+    
+    if (binDrift > 0.08) { // 80ms threshold
+      console.log(`[AudioEngine] Correcting binaural drift: ${(binDrift * 1000).toFixed(0)}ms`);
+      this.binPlayer.seekTo(binExpected);
+    }
+
+    // Check background drift
+    const bgTime = this.bgPlayer.currentTime;
+    const bgExpected = affTime % bgDuration;
+    const bgDrift = Math.abs(bgTime - bgExpected);
+    
+    if (bgDrift > 0.08) { // 80ms threshold
+      console.log(`[AudioEngine] Correcting background drift: ${(bgDrift * 1000).toFixed(0)}ms`);
+      this.bgPlayer.seekTo(bgExpected);
+    }
+  }
+
   load(bundle: PlaybackBundleVM): Promise<void> {
     console.log("[AudioEngine] load() method called");
     return this.enqueue(async () => {
@@ -124,6 +332,21 @@ export class AudioEngine {
       
       this.currentBundle = bundle;
       console.log("[AudioEngine] Bundle stored in currentBundle");
+      
+      // Initialize voice activity ducker if available
+      if (bundle.voiceActivity && bundle.voiceActivity.segments) {
+        this.ducker = new VoiceActivityDucker(bundle.voiceActivity.segments);
+        console.log(`[AudioEngine] Voice activity ducker initialized with ${bundle.voiceActivity.segments.length} segments`);
+      } else {
+        this.ducker = null;
+      }
+      
+      // Reset automation state for new session
+      this.automationMultipliers = {
+        affirmations: 0,
+        binaural: 0,
+        background: 0,
+      };
       
       // If we're in preroll state, keep it (don't change to loading yet)
       // Loading will happen in parallel with pre-roll
@@ -243,10 +466,15 @@ export class AudioEngine {
             playing: status.playing,
             duration: status.duration,
             currentTime: status.currentTime,
+            error: (status as any).error,
           });
           
+          if ((status as any).error) {
+            console.error("[AudioEngine] ❌ Affirmations player error:", (status as any).error);
+          }
+          
           if (status.isLoaded) {
-            console.log("[AudioEngine] Affirmations player loaded:", {
+            console.log("[AudioEngine] ✅ Affirmations player loaded:", {
               duration: status.duration,
               playing: status.playing,
               loop: this.affPlayer?.loop
@@ -339,8 +567,12 @@ export class AudioEngine {
       await this.prerollPlayer.play();
       console.log("[AudioEngine] Pre-roll player started");
       
-      // Fade in over 150-300ms
-      this.fadePrerollVolume(0, 0.10, 250);
+      // Fade in over 250ms using smoother (control loop will handle it)
+      this.prerollSmoother.reset(0);
+      this.prerollSmoother.setTarget(0.10); // Cap at 10%
+      
+      // Start control loop for preroll
+      this.startControlLoop();
     } catch (error) {
       console.error("[AudioEngine] Failed to start pre-roll:", error);
       console.warn("[AudioEngine] Continuing without pre-roll");
@@ -428,6 +660,8 @@ export class AudioEngine {
           return;
         }
         // Main tracks not ready yet, pre-roll continues
+        // Start control loop for preroll
+        this.startControlLoop();
         return;
       }
       
@@ -436,6 +670,7 @@ export class AudioEngine {
         if (!this.prerollPlayer) {
           await this.startPreroll();
           this.setState({ status: "preroll" });
+          this.startControlLoop(); // Start control loop for preroll
         }
         return; // Wait for load to complete
       }
@@ -492,6 +727,8 @@ export class AudioEngine {
           this.bgPlayer.play()
         ]);
         
+        this.sessionStartTime = Date.now(); // Restart intro automation
+        this.startControlLoop();
         this.startPolling();
         this.setState({ status: "playing" });
         console.log("[AudioEngine] Resumed playback");
@@ -508,6 +745,11 @@ export class AudioEngine {
       });
 
       // Initialize all players at volume 0 for rolling start
+      // Use smoothers for smooth intro automation
+      this.affSmoother.reset(0);
+      this.binSmoother.reset(0);
+      this.bgSmoother.reset(0);
+      
       if (this.affPlayer) this.affPlayer.volume = 0;
       if (this.binPlayer) this.binPlayer.volume = 0;
       if (this.bgPlayer) this.bgPlayer.volume = 0;
@@ -518,58 +760,127 @@ export class AudioEngine {
         // 2. Binaural starts after background begins, fades in over 1 second
         // 3. Affirmations start after binaural begins (no fade, immediate)
         
-        console.log("[AudioEngine] Step 1: Starting background player...");
-        await this.bgPlayer!.play();
-        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        // Get URLs from currentBundle for logging
+        const getUrl = this.currentBundle ? ((asset: { urlByPlatform: { ios: string, android: string } }) => {
+          return Platform.OS === "ios" ? asset.urlByPlatform.ios : asset.urlByPlatform.android;
+        }) : null;
         
-        // Verify background is playing
-        if (!this.bgPlayer!.playing) {
-          console.warn("[AudioEngine] ⚠️  Background player not playing, retrying...");
-          await this.bgPlayer!.pause();
-          await new Promise(resolve => setTimeout(resolve, 50));
+        console.log("[AudioEngine] Step 1: Starting background player...");
+        const bgUrl = this.currentBundle && getUrl ? getUrl(this.currentBundle.background) : "unknown";
+        console.log("[AudioEngine] Background player before play():", {
+          uri: bgUrl,
+          duration: this.bgPlayer!.duration,
+          playing: this.bgPlayer!.playing,
+          volume: this.bgPlayer!.volume,
+        });
+        
+        try {
           await this.bgPlayer!.play();
+          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
+          
+          // Verify background is playing
+          if (!this.bgPlayer!.playing) {
+            console.warn("[AudioEngine] ⚠️  Background player not playing, retrying...");
+            console.log("[AudioEngine] Background player state before retry:", {
+              duration: this.bgPlayer!.duration,
+              playing: this.bgPlayer!.playing,
+              volume: this.bgPlayer!.volume,
+            });
+            await this.bgPlayer!.pause();
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await this.bgPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            if (!this.bgPlayer!.playing) {
+              console.error("[AudioEngine] ❌ Background player failed to start after retry!");
+              console.error("[AudioEngine] Check if audio file exists and is accessible:", bgUrl);
+            }
+          }
+        } catch (error) {
+          console.error("[AudioEngine] ❌ Error starting background player:", error);
+          console.error("[AudioEngine] Audio file URL:", bgUrl);
         }
         
-        console.log("[AudioEngine] ✅ Background started, fading in over 3 seconds");
-        const targetBgVolume = this.snapshot.mix.background;
-        this.fadeVolume(this.bgPlayer!, 0, targetBgVolume, 3000);
+        console.log("[AudioEngine] ✅ Background started, intro automation will fade in over 1200ms");
         
-        // Wait 1 second before starting binaural (so it starts 1s into background fade)
+        // Wait 1 second before starting binaural
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         console.log("[AudioEngine] Step 2: Starting binaural player...");
-        await this.binPlayer!.play();
-        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        const binUrl = this.currentBundle && getUrl ? getUrl(this.currentBundle.binaural) : "unknown";
+        console.log("[AudioEngine] Binaural player before play():", {
+          uri: binUrl,
+          duration: this.binPlayer!.duration,
+          playing: this.binPlayer!.playing,
+          volume: this.binPlayer!.volume,
+        });
         
-        // Verify binaural is playing
-        if (!this.binPlayer!.playing) {
-          console.warn("[AudioEngine] ⚠️  Binaural player not playing, retrying...");
-          await this.binPlayer!.pause();
-          await new Promise(resolve => setTimeout(resolve, 50));
+        try {
           await this.binPlayer!.play();
+          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
+          
+          // Verify binaural is playing
+          if (!this.binPlayer!.playing) {
+            console.warn("[AudioEngine] ⚠️  Binaural player not playing, retrying...");
+            console.log("[AudioEngine] Binaural player state before retry:", {
+              duration: this.binPlayer!.duration,
+              playing: this.binPlayer!.playing,
+              volume: this.binPlayer!.volume,
+            });
+            await this.binPlayer!.pause();
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await this.binPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            if (!this.binPlayer!.playing) {
+              console.error("[AudioEngine] ❌ Binaural player failed to start after retry!");
+              console.error("[AudioEngine] Check if audio file exists and is accessible:", binUrl);
+            }
+          }
+        } catch (error) {
+          console.error("[AudioEngine] ❌ Error starting binaural player:", error);
+          console.error("[AudioEngine] Audio file URL:", binUrl);
         }
         
-        console.log("[AudioEngine] ✅ Binaural started, fading in over 1 second");
-        const targetBinVolume = this.snapshot.mix.binaural;
-        this.fadeVolume(this.binPlayer!, 0, targetBinVolume, 1000);
+        console.log("[AudioEngine] ✅ Binaural started, intro automation will fade in over 2000ms");
         
-        // Wait 1 second before starting affirmations (so it starts when binaural fade completes)
+        // Wait 1 second before starting affirmations
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         console.log("[AudioEngine] Step 3: Starting affirmations player...");
-        // Set affirmations to target volume immediately (no fade)
-        if (this.affPlayer) {
-          this.affPlayer.volume = this.snapshot.mix.affirmations;
-        }
-        await this.affPlayer!.play();
-        await new Promise(resolve => setTimeout(resolve, 100)); // Wait for player to start
+        const affUrl = this.currentBundle?.affirmationsMergedUrl || "unknown";
+        console.log("[AudioEngine] Affirmations player before play():", {
+          uri: affUrl,
+          duration: this.affPlayer!.duration,
+          playing: this.affPlayer!.playing,
+          volume: this.affPlayer!.volume,
+        });
         
-        // Verify affirmations is playing
-        if (!this.affPlayer!.playing) {
-          console.warn("[AudioEngine] ⚠️  Affirmations player not playing, retrying...");
-          await this.affPlayer!.pause();
-          await new Promise(resolve => setTimeout(resolve, 50));
+        try {
           await this.affPlayer!.play();
+          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
+          
+          // Verify affirmations is playing
+          if (!this.affPlayer!.playing) {
+            console.warn("[AudioEngine] ⚠️  Affirmations player not playing, retrying...");
+            console.log("[AudioEngine] Affirmations player state before retry:", {
+              duration: this.affPlayer!.duration,
+              playing: this.affPlayer!.playing,
+              volume: this.affPlayer!.volume,
+            });
+            await this.affPlayer!.pause();
+            await new Promise(resolve => setTimeout(resolve, 100));
+            await this.affPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            if (!this.affPlayer!.playing) {
+              console.error("[AudioEngine] ❌ Affirmations player failed to start after retry!");
+              console.error("[AudioEngine] Check if audio file exists and is accessible:", affUrl);
+            }
+          }
+        } catch (error) {
+          console.error("[AudioEngine] ❌ Error starting affirmations player:", error);
+          console.error("[AudioEngine] Audio file URL:", affUrl);
         }
         
         console.log("[AudioEngine] ✅ All players started with rolling start sequence");
@@ -608,6 +919,9 @@ export class AudioEngine {
           }
         }, 500);
         
+        // Start control loop and position polling
+        this.sessionStartTime = Date.now(); // Start intro automation
+        this.startControlLoop();
         this.startPolling();
         this.setState({ status: "playing" });
         console.log("[AudioEngine] All players started, status set to playing");
@@ -648,8 +962,8 @@ export class AudioEngine {
   }
 
   /**
-   * Crossfade from pre-roll to main mix.
-   * Pre-roll fades out over 1.5-2.0 seconds while main mix fades in.
+   * Crossfade from pre-roll to main mix using equal-power curve and control loop.
+   * Pre-roll fades out over 1.75 seconds while main mix fades in.
    */
   private async crossfadeToMainMix(): Promise<void> {
     if (!this.prerollPlayer || !this.affPlayer || !this.binPlayer || !this.bgPlayer) {
@@ -658,32 +972,33 @@ export class AudioEngine {
 
     const crossfadeDuration = 1750; // 1.75 seconds
 
-    // Start main tracks at volume 0
-    this.affPlayer.volume = 0;
-    this.binPlayer.volume = 0;
-    this.bgPlayer.volume = 0;
+    // Initialize main tracks at volume 0 (control loop will fade them in)
+    this.affSmoother.reset(0);
+    this.binSmoother.reset(0);
+    this.bgSmoother.reset(0);
+    
+    // Initialize preroll smoother at current volume
+    this.prerollSmoother.reset(this.prerollPlayer.volume);
 
-    // Play main tracks simultaneously (muted) for better synchronization
+    // Play main tracks simultaneously (muted initially, control loop will fade in)
     await Promise.all([
       this.affPlayer.play(),
       this.binPlayer.play(),
       this.bgPlayer.play()
     ]);
 
-    // Fade pre-roll out
-    const currentPrerollVolume = this.prerollPlayer.volume;
-    this.fadePrerollVolume(currentPrerollVolume, 0, crossfadeDuration);
+    // Start crossfade (control loop will handle the equal-power curve)
+    this.isCrossfading = true;
+    this.crossfadeStartTime = Date.now();
+    this.crossfadeDuration = crossfadeDuration;
+    this.sessionStartTime = Date.now(); // Start intro automation
 
-    // Fade main mix in
-    const targetMix = this.snapshot.mix;
-    this.fadeMainMixVolume(0, targetMix, crossfadeDuration);
-
-    // After crossfade, stop pre-roll
-    setTimeout(async () => {
-      await this.stopPreroll(0); // Already faded, just release
-      this.setState({ status: "playing" });
-      this.startPolling();
-    }, crossfadeDuration + 100);
+    // Start control loop to drive crossfade
+    this.startControlLoop();
+    this.startPolling();
+    
+    // After crossfade completes, control loop will clean up preroll
+    // Status will be set to "playing" by control loop when crossfade finishes
   }
 
   /**
@@ -735,6 +1050,7 @@ export class AudioEngine {
         await this.stopPreroll(400);
       }
 
+      this.stopControlLoop();
       this.stopPolling();
       this.setState({ status: "paused" });
     });
@@ -758,7 +1074,11 @@ export class AudioEngine {
       this.bgPlayer?.pause();
       this.bgPlayer?.seekTo(0);
 
+      this.stopControlLoop();
       this.stopPolling();
+      // Reset automation
+      this.sessionStartTime = 0;
+      this.automationMultipliers = { affirmations: 0, binaural: 0, background: 0 };
       this.setState({ status: "idle", positionMs: 0 }); // Back to idle
       // Keep currentBundle so user can play again without reloading
       // this.currentBundle = null;
@@ -784,17 +1104,38 @@ export class AudioEngine {
     });
   }
 
-  setMix(mix: Mix): void {
-    // This can be sync-ish but safer in queue to avoid access race
-    this.enqueue(async () => {
-      // Mark that user has explicitly set the mix (prevents reset on reload)
+  setMix(mix: Mix, opts?: { rampMs?: number; source?: "user" | "system" }): void {
+    // Mark that user has explicitly set the mix (prevents reset on reload)
+    if (opts?.source === "user" || opts === undefined) {
       this.hasUserSetMix = true;
-      
+    }
+    
+    // Update snapshot mix (control loop will apply with smoothing)
+    this.setState({ mix });
+    
+    // If control loop is running, it will smoothly transition
+    // If not, set volumes directly (for immediate feedback when not playing)
+    if (this.snapshot.status !== "playing" && this.snapshot.status !== "preroll") {
       if (this.affPlayer) this.affPlayer.volume = mix.affirmations;
       if (this.binPlayer) this.binPlayer.volume = mix.binaural;
       if (this.bgPlayer) this.bgPlayer.volume = mix.background;
-      this.setState({ mix });
-    });
+    }
+    // Otherwise, control loop will handle smooth transition
+  }
+
+  /**
+   * Set voice prominence (convenience method)
+   * Maps a single slider (0..1) to a mix where voice is always at 1.0
+   * and beds scale inversely
+   */
+  setVoiceProminence(x: number): void {
+    const clamped = Math.max(0, Math.min(1, x));
+    const mix: Mix = {
+      affirmations: 1.0,
+      background: 0.18 + (0.38 - 0.18) * (1 - clamped), // Lerp from 0.38 to 0.18
+      binaural: 0.14 + (0.32 - 0.14) * (1 - clamped),   // Lerp from 0.32 to 0.14
+    };
+    this.setMix(mix, { source: "user" });
   }
 }
 

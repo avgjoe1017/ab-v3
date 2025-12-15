@@ -10,7 +10,9 @@
     "lint": "echo \"(add eslint if desired)\"",
     "format": "echo \"(add prettier if desired)\"",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "generate:beginner": "bun scripts/generate-beginner-sessions.ts",
+    "cleanup:test": "bun scripts/cleanup-test-sessions.ts"
   },
   "dependencies": {
     "@ab/contracts": "workspace:*",

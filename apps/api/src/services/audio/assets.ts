@@ -2,14 +2,6 @@ import path from "path";
 import fs from "fs-extra";
 import { STORAGE_PUBLIC_BASE_URL, ASSETS_PUBLIC_BASE_URL } from "../../index";
 
-// Get API base URL from environment or default to localhost
-// This can be overridden via API_BASE_URL env var for physical device testing
-const getApiBaseUrl = (): string => {
-  const envUrl = process.env.API_BASE_URL;
-  if (envUrl) return envUrl;
-  return "http://localhost:8787";
-};
-
 /**
  * V3 Compliance: Resolve binaural and background assets from AudioAsset table or constants.
  * Returns platform-aware URLs for playback bundle.
@@ -26,8 +18,13 @@ const DEFAULT_BACKGROUND_ID = "Babbling Brook"; // From assets/audio/background/
 /**
  * Get binaural asset URL by frequency (Hz)
  * Returns platform-aware URLs for iOS and Android
+ * @param hz - Binaural frequency in Hz (default: 10)
+ * @param apiBaseUrl - Base URL of the API server (e.g., "http://localhost:8787")
  */
-export async function getBinauralAsset(hz: number = DEFAULT_BINAURAL_HZ): Promise<{
+export async function getBinauralAsset(
+    hz: number = DEFAULT_BINAURAL_HZ,
+    apiBaseUrl: string = "http://localhost:8787"
+): Promise<{
     urlByPlatform: { ios: string; android: string };
     loop: true;
     hz: number;
@@ -40,7 +37,15 @@ export async function getBinauralAsset(hz: number = DEFAULT_BINAURAL_HZ): Promis
         // Try to find any alpha binaural
         const fallbackPath = path.resolve(PROJECT_ROOT, "assets", "audio", "binaural", "alpha_10hz_400_3min.m4a");
         if (await fs.pathExists(fallbackPath)) {
-            const url = `${ASSETS_PUBLIC_BASE_URL}/${path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/")}`;
+            const relativePath = path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/");
+            const basePath = relativePath.startsWith("assets/") 
+              ? `/${relativePath}` 
+              : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
+            const encodedPath = basePath
+              .split("/")
+              .map(segment => segment ? encodeURIComponent(segment) : segment)
+              .join("/");
+            const url = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
             return {
                 urlByPlatform: { ios: url, android: url },
                 loop: true,
@@ -69,8 +74,7 @@ export async function getBinauralAsset(hz: number = DEFAULT_BINAURAL_HZ): Promis
       .join("/");
     
     // Convert to absolute URL if it's a relative path
-    // Use API_BASE_URL env var or default to localhost
-    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${getApiBaseUrl()}${encodedPath}`;
+    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
     
     return {
         urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },
@@ -82,8 +86,13 @@ export async function getBinauralAsset(hz: number = DEFAULT_BINAURAL_HZ): Promis
 /**
  * Get background asset URL by ID
  * Returns platform-aware URLs for iOS and Android
+ * @param backgroundId - Background asset ID (default: "Babbling Brook")
+ * @param apiBaseUrl - Base URL of the API server (e.g., "http://localhost:8787")
  */
-export async function getBackgroundAsset(backgroundId: string = DEFAULT_BACKGROUND_ID): Promise<{
+export async function getBackgroundAsset(
+    backgroundId: string = DEFAULT_BACKGROUND_ID,
+    apiBaseUrl: string = "http://localhost:8787"
+): Promise<{
     urlByPlatform: { ios: string; android: string };
     loop: true;
 }> {
@@ -94,7 +103,15 @@ export async function getBackgroundAsset(backgroundId: string = DEFAULT_BACKGROU
     if (!(await fs.pathExists(assetPath))) {
         const fallbackPath = path.resolve(PROJECT_ROOT, "assets", "audio", "background", "looped", `${DEFAULT_BACKGROUND_ID}.m4a`);
         if (await fs.pathExists(fallbackPath)) {
-            const url = `${ASSETS_PUBLIC_BASE_URL}/${path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/")}`;
+            const relativePath = path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/");
+            const basePath = relativePath.startsWith("assets/") 
+              ? `/${relativePath}` 
+              : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
+            const encodedPath = basePath
+              .split("/")
+              .map(segment => segment ? encodeURIComponent(segment) : segment)
+              .join("/");
+            const url = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
             return {
                 urlByPlatform: { ios: url, android: url },
                 loop: true,
@@ -121,8 +138,7 @@ export async function getBackgroundAsset(backgroundId: string = DEFAULT_BACKGROU
       .join("/");
     
     // Convert to absolute URL if it's a relative path
-    // Use API_BASE_URL env var or default to localhost
-    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${getApiBaseUrl()}${encodedPath}`;
+    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
     
     return {
         urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },

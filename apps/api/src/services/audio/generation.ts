@@ -9,6 +9,8 @@ import { CHUNKS_DIR, SILENCE_DURATIONS_MS } from "./constants";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { generateTTSAudio } from "./tts";
+import { measureLoudness } from "./loudness";
+import { generateVoiceActivitySegments } from "./voiceActivity";
 const execFileAsync = promisify(execFile);
 
 // Temporary fix for simple imports if contracts export isn't fully set up with types in this context
@@ -276,17 +278,39 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         mergedPath = existingMerged.url;
         mergedAssetId = existingMerged.id;
     } else {
-        // Stitched output
-        console.log(`Stitching ${filePaths.length} chunks...`);
-        mergedPath = await stitchAudioFiles(filePaths, mergedHash);
+        // Stitched output with new WAV→AAC pipeline
+        console.log(`[Audio] Stitching ${filePaths.length} chunks with loop padding...`);
+        mergedPath = await stitchAudioFiles(filePaths, mergedHash, {
+            targetLUFS: -20, // Affirmations target: -20 LUFS
+            targetTP: -1.5,  // True peak: -1.5 dBTP
+            addLoopPadding: true, // Add 500ms prepend + 750ms append for loop crossfade
+        });
+
+        // Measure final loudness (should match target, but verify)
+        console.log(`[Audio] Verifying loudness of merged file...`);
+        const loudness = await measureLoudness(mergedPath);
+        
+        // Generate voice activity segments for ducking
+        console.log(`[Audio] Generating voice activity segments...`);
+        const voiceActivity = await generateVoiceActivitySegments(mergedPath);
+        
+        // Store metadata in metaJson
+        const metaJson = JSON.stringify({
+            loudness,
+            voiceActivity: voiceActivity.segments.length > 0 ? voiceActivity : undefined,
+        });
 
         const asset = await prisma.audioAsset.upsert({
             where: { kind_hash: { kind: "affirmationMerged", hash: mergedHash } },
-            update: { url: mergedPath },
+            update: { 
+                url: mergedPath,
+                metaJson: metaJson,
+            },
             create: {
                 kind: "affirmationMerged",
                 hash: mergedHash,
                 url: mergedPath,
+                metaJson: metaJson,
             }
         });
         mergedAssetId = asset.id;

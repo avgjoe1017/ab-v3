@@ -1,9 +1,22 @@
 export const AUDIO_PROFILE_V3 = {
-    CODEC: "mp3",
-    BITRATE_KBEPS: 128,
-    SAMPLE_RATE_HZ: 44100,
+    // Processing intermediate format
+    INTERMEDIATE_CODEC: "wav",
+    INTERMEDIATE_SAMPLE_RATE_HZ: 48000,
+    INTERMEDIATE_BIT_DEPTH: 24,
+    
+    // Final shipping format (AAC .m4a for gapless playback)
+    CODEC: "aac",
+    CONTAINER: "m4a",
+    BITRATE_KBEPS: 192, // VBR or CBR
+    SAMPLE_RATE_HZ: 48000,
     CHANNELS: 2, // Stereo
-    VERSION: "v3_0_0",
+    
+    // Legacy MP3 support (for backward compatibility during transition)
+    LEGACY_CODEC: "mp3",
+    LEGACY_BITRATE_KBEPS: 128,
+    LEGACY_SAMPLE_RATE_HZ: 44100,
+    
+    VERSION: "v3_1_0", // Bumped for audio experience improvements
 } as const;
 
 export const SILENCE_DURATIONS_MS = [
