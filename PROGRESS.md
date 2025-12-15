@@ -3306,3 +3306,34 @@ const [voice, setVoice] = useState<OnboardingVoice | null>(null);
 **Note**: Voice sample playback in OnboardingVoiceScreen is stubbed (TODO comment). Actual voice samples would require audio files or API integration. Primer animation is skippable but skip button UI is minimal - could be enhanced later.
 
 **Status**: ✅ **Phases 6 & 7 Complete** - Full onboarding flow and premium polish features implemented. All phases (0-7) of the roadmap are now complete! 🎉
+
+---
+
+## 2025-01-14 - Codebase Overview Documentation
+
+**Decision**: Created comprehensive codebase overview document to help developers understand the architecture, structure, and key components.
+
+**Why**: The codebase has grown significantly and needed a single reference document that captures:
+- Monorepo structure and technology stack
+- Core architectural principles (V3 design philosophy)
+- Data models and API endpoints
+- Audio pipeline and playback architecture
+- Mobile app screens and state management
+- Development workflow and key files
+
+**Delivered**:
+- Created `MD_DOCS/CODEBASE_OVERVIEW.md` with detailed sections covering:
+  - Executive summary and project structure
+  - Technology stack breakdown (mobile, API, shared packages)
+  - Core architecture principles and V3 design philosophy
+  - Data models (Prisma schema and Zod contracts)
+  - Audio pipeline (generation flow and playback architecture)
+  - API endpoints documentation
+  - Mobile app screens and components
+  - State management patterns
+  - Entitlements and limits
+  - Development workflow
+  - Key files reference
+  - Current status and notable implementation details
+
+**Impact**: Provides a single source of truth for understanding the codebase structure, making onboarding easier and serving as a reference for architectural decisions.

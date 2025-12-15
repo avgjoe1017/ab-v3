@@ -6,6 +6,7 @@ export type ApiErrorCode =
   | "FREE_LIMIT_REACHED"
   | "SESSION_TOO_LONG"
   | "AUDIO_NOT_READY"
+  | "ASSET_ERROR"
   | "INTERNAL_ERROR";
 
 export type ApiError = {

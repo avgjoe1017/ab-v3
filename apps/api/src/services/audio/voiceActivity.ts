@@ -58,19 +58,34 @@ export async function generateVoiceActivitySegments(
 
         let match;
         while ((match = silenceStartRegex.exec(stderr)) !== null) {
-            const start = parseFloat(match[1]) * 1000; // Convert to ms
+            const matchValue = match[1];
+            if (!matchValue) continue;
+            const start = parseFloat(matchValue) * 1000; // Convert to ms
             silenceWindows.push({ start, end: Infinity });
         }
 
         let endIndex = 0;
         while ((match = silenceEndRegex.exec(stderr)) !== null && endIndex < silenceWindows.length) {
-            const end = parseFloat(match[1]) * 1000; // Convert to ms
-            // Find the next unclosed silence window
-            while (endIndex < silenceWindows.length && silenceWindows[endIndex].end !== Infinity) {
+            const matchValue = match[1];
+            if (!matchValue) {
                 endIndex++;
+                continue;
+            }
+            const end = parseFloat(matchValue) * 1000; // Convert to ms
+            // Find the next unclosed silence window
+            while (endIndex < silenceWindows.length) {
+                const window = silenceWindows[endIndex];
+                if (window && window.end !== Infinity) {
+                    endIndex++;
+                } else {
+                    break;
+                }
             }
             if (endIndex < silenceWindows.length) {
-                silenceWindows[endIndex].end = end;
+                const window = silenceWindows[endIndex];
+                if (window) {
+                    window.end = end;
+                }
             }
             endIndex++;
         }
@@ -78,12 +93,14 @@ export async function generateVoiceActivitySegments(
         // Get file duration to close any unclosed silence windows
         const durationMatch = stderr.match(/Duration: ([\d:]+\.\d+)/);
         let fileDurationMs = Infinity;
-        if (durationMatch) {
+        if (durationMatch?.[1]) {
             const timeParts = durationMatch[1].split(":");
-            fileDurationMs = 
-                parseFloat(timeParts[0]) * 3600000 +
-                parseFloat(timeParts[1]) * 60000 +
-                parseFloat(timeParts[2]) * 1000;
+            if (timeParts.length >= 3 && timeParts[0] && timeParts[1] && timeParts[2]) {
+                fileDurationMs = 
+                    parseFloat(timeParts[0]) * 3600000 +
+                    parseFloat(timeParts[1]) * 60000 +
+                    parseFloat(timeParts[2]) * 1000;
+            }
         }
 
         // Close any unclosed silence windows at file end

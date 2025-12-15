@@ -391,7 +391,12 @@ if (import.meta.main) {
       // Support Range requests (required for iOS AVPlayer)
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
+        const startStr = parts[0];
+        if (!startStr) {
+          c.status(400);
+          return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
+        }
+        const start = parseInt(startStr, 10);
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunkSize = end - start + 1;
         
@@ -409,17 +414,31 @@ if (import.meta.main) {
         c.header("Accept-Ranges", "bytes");
         
         // Stream only the requested byte range without loading entire file into memory
-        const stream = createReadStream(filePath, { start, end });
-        return c.body(stream);
+        // Use Bun.file().slice() for efficient range requests
+        const slicedFile = file.slice(start, end + 1);
+        // Create Response with proper headers
+        const response = new Response(slicedFile);
+        // Copy headers from context
+        c.res.headers.forEach((value, key) => {
+          response.headers.set(key, value);
+        });
+        return response;
       } else {
         // No Range header - return full file
         c.header("Content-Length", fileSize.toString());
         c.header("Accept-Ranges", "bytes");
-        return c.body(file);
+        // Create Response with proper headers
+        const response = new Response(file);
+        // Copy headers from context
+        c.res.headers.forEach((value, key) => {
+          response.headers.set(key, value);
+        });
+        return response;
       }
-    } catch (error) {
-      console.error("[API] Error serving storage file:", error);
-      return c.json(error("INTERNAL_ERROR", "Failed to serve file", error), 500);
+    } catch (err: unknown) {
+      console.error("[API] Error serving storage file:", err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      return c.json(error("INTERNAL_ERROR", "Failed to serve file", errorMessage), 500);
     }
   });
   
@@ -455,7 +474,12 @@ if (import.meta.main) {
       // Support Range requests (required for iOS AVPlayer)
       if (range) {
         const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
+        const startStr = parts[0];
+        if (!startStr) {
+          c.status(400);
+          return c.json(error("VALIDATION_ERROR", "Invalid Range header"));
+        }
+        const start = parseInt(startStr, 10);
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunkSize = end - start + 1;
         
@@ -473,18 +497,31 @@ if (import.meta.main) {
         c.header("Accept-Ranges", "bytes");
         
         // Stream only the requested byte range without loading entire file into memory
-        // Use fs.createReadStream with start/end options for efficient streaming
-        const stream = createReadStream(filePath, { start, end });
-        return c.body(stream);
+        // Use Bun.file().slice() for efficient range requests
+        const slicedFile = file.slice(start, end + 1);
+        // Create Response with proper headers
+        const response = new Response(slicedFile);
+        // Copy headers from context
+        c.res.headers.forEach((value, key) => {
+          response.headers.set(key, value);
+        });
+        return response;
       } else {
         // No Range header - return full file
         c.header("Content-Length", fileSize.toString());
         c.header("Accept-Ranges", "bytes");
-        return c.body(file);
+        // Create Response with proper headers
+        const response = new Response(file);
+        // Copy headers from context
+        c.res.headers.forEach((value, key) => {
+          response.headers.set(key, value);
+        });
+        return response;
       }
-    } catch (error) {
-      console.error("[API] Error serving asset:", error);
-      return c.text("Internal Server Error", 500);
+    } catch (err: unknown) {
+      console.error("[API] Error serving asset:", err);
+      const errorMessage = err instanceof Error ? err.message : "Internal Server Error";
+      return c.text(errorMessage, 500);
     }
   });
 
