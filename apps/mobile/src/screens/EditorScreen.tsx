@@ -3,11 +3,13 @@ import { View, Text, TextInput, Button, ScrollView, StyleSheet } from "react-nat
 import { useDraftStore } from "../state/useDraftStore";
 import { apiPost } from "../lib/api";
 import { SessionV3Schema, type SessionV3 } from "@ab/contracts";
+import { useAuthToken } from "../lib/auth";
 
 export default function EditorScreen({ navigation }: any) {
     const { draft, updateDraft, addAffirmation, removeAffirmation, clearDraft } = useDraftStore();
     const [newAffirmation, setNewAffirmation] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const authToken = useAuthToken();
 
     // If no draft, nav back (shouldn't happen if properly initialized)
     useEffect(() => {
@@ -33,7 +35,7 @@ export default function EditorScreen({ navigation }: any) {
 
             console.log("Saving draft...", draft);
 
-            const res = await apiPost<SessionV3>("/sessions", draft);
+            const res = await apiPost<SessionV3>("/sessions", draft, authToken);
             // Validate response basic shape to ensure type safety
             // In a real app we'd parse with Zod
             console.log("Session created:", res);

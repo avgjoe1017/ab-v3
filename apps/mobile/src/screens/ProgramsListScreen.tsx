@@ -21,16 +21,10 @@ export default function ProgramsListScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <IconButton
-            icon="arrow-back"
-            onPress={() => navigation.goBack()}
-            variant="filled"
-          />
           <View style={styles.headerCenter}>
             <Text style={styles.headerTitle}>Programs</Text>
             <Text style={styles.headerSubtitle}>Structured journeys, one day at a time</Text>
           </View>
-          <View style={styles.headerSpacer} />
         </View>
 
         {/* Intro */}
@@ -46,7 +40,7 @@ export default function ProgramsListScreen({ navigation }: any) {
             <ProgramCard
               key={program.id}
               program={program}
-              onPress={() => navigation.navigate("ProgramDetail", { programId: program.id })}
+              onPress={() => navigation.getParent()?.navigate("ProgramDetail", { programId: program.id })}
             />
           ))}
         </View>

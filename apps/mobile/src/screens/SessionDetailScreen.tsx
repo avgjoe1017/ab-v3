@@ -8,16 +8,18 @@ import { AppScreen, IconButton, SectionHeader, PrimaryButton, Chip, Card } from 
 import { theme } from "../theme";
 import { toggleSavedSession, isSessionSaved } from "../storage/savedSessions";
 import { getFrequencyExplanation } from "../lib/science";
+import { useAuthToken } from "../lib/auth";
 
 export default function SessionDetailScreen({ route, navigation }: any) {
   const sessionId: string = route.params.sessionId;
   const queryClient = useQueryClient();
+  const authToken = useAuthToken();
 
   // Fetch session details
   const { data: session, isLoading } = useQuery({
-    queryKey: ["session", sessionId],
+    queryKey: ["session", sessionId, authToken],
     queryFn: async () => {
-      const res = await apiGet<any>(`/sessions/${sessionId}`);
+      const res = await apiGet<any>(`/sessions/${sessionId}`, authToken);
       // Validate with schema
       return SessionV3Schema.parse(res);
     },
@@ -33,9 +35,9 @@ export default function SessionDetailScreen({ route, navigation }: any) {
 
   // Fetch related sessions (sessions with same goalTag, excluding current)
   const { data: allSessions } = useQuery({
-    queryKey: ["sessions"],
+    queryKey: ["sessions", authToken],
     queryFn: async () => {
-      const res = await apiGet<{ sessions: Array<{ id: string; title: string; goalTag?: string }> }>("/sessions");
+      const res = await apiGet<{ sessions: Array<{ id: string; title: string; goalTag?: string }> }>("/sessions", authToken);
       return res.sessions;
     },
   });
@@ -321,9 +323,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing[3],
   },
   title: {
-    ...theme.typography.styles.h1,
-    fontSize: theme.typography.fontSize["3xl"],
-    color: theme.colors.text.primary,
+    ...theme.typography.styles.affirmationTitle,
     flex: 1,
   },
   saveButton: {

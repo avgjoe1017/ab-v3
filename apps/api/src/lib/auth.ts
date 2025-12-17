@@ -46,8 +46,8 @@ export async function getUserId(c: Context): Promise<string | null> {
  * @returns User ID string
  * @throws Returns 401 error response if not authenticated
  */
-export function requireAuth(c: Context): string {
-  const userId = getUserId(c);
+export async function requireAuth(c: Context): Promise<string> {
+  const userId = await getUserId(c);
   
   if (!userId) {
     // TODO: Return proper error response
@@ -61,10 +61,10 @@ export function requireAuth(c: Context): string {
  * Check if request is authenticated
  * 
  * @param c - Hono context
- * @returns true if authenticated, false otherwise
+ * @returns Promise<boolean> - true if authenticated, false otherwise
  */
-export function isAuthenticated(c: Context): boolean {
-  const userId = getUserId(c);
+export async function isAuthenticated(c: Context): Promise<boolean> {
+  const userId = await getUserId(c);
   return userId !== null;
 }
 

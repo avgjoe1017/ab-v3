@@ -2,9 +2,8 @@ import React, { useState, useMemo, useEffect } from "react";
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
-import { AppScreen, Chip, SectionHeader, BottomTabs, MiniPlayer, Card } from "../components";
+import { AppScreen, Chip, SectionHeader, MiniPlayer, Card } from "../components";
 import { theme } from "../theme";
-import type { TabRoute } from "../components";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { getAudioEngine } from "@ab/audio-engine";
@@ -42,35 +41,18 @@ export default function ExploreScreen({ navigation }: any) {
 
   const newArrivals = sessions?.slice(3, 5) || [];
 
-  const handleNavigate = (route: TabRoute) => {
-    switch (route) {
-      case "Today":
-        navigation.navigate("Home");
-        break;
-      case "Explore":
-        // Already on Explore
-        break;
-      case "Programs":
-        navigation.navigate("ProgramsList");
-        break;
-      case "Library":
-        navigation.navigate("Library");
-        break;
-    }
-  };
-
   const handleSessionPress = (sessionId: string) => {
-    navigation.navigate("SessionDetail", { sessionId });
+    navigation.getParent()?.navigate("SessionDetail", { sessionId });
   };
 
   const handleMiniPlayerPress = () => {
     if (currentSessionId) {
-      navigation.navigate("Player", { sessionId: currentSessionId });
+      navigation.getParent()?.navigate("Player", { sessionId: currentSessionId });
     }
   };
 
   return (
-    <AppScreen gradient={false} backgroundColor="#f8f6f8">
+    <AppScreen gradient={false} backgroundColor={theme.colors.background.primary}>
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -89,11 +71,11 @@ export default function ExploreScreen({ navigation }: any) {
           </View>
           {/* Search Bar */}
           <View style={styles.searchContainer}>
-            <MaterialIcons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
+            <MaterialIcons name="search" size={20} color={theme.colors.text.tertiary} style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search sessions, goals, or moods..."
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={theme.colors.text.tertiary}
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
@@ -250,7 +232,7 @@ export default function ExploreScreen({ navigation }: any) {
                   <Text style={styles.newArrivalSubtitle}>{item.goalTag || "Session"}</Text>
                 </View>
                 <Pressable style={styles.newArrivalAddButton}>
-                  <MaterialIcons name="add" size={18} color="#9ca3af" />
+                  <MaterialIcons name="add" size={18} color={theme.colors.text.tertiary} />
                 </Pressable>
               </Card>
             ))}
@@ -265,12 +247,6 @@ export default function ExploreScreen({ navigation }: any) {
         sessionId={currentSessionId}
         onPress={handleMiniPlayerPress}
       />
-
-      {/* Bottom Navigation */}
-      <BottomTabs
-        activeRoute="Explore"
-        onNavigate={handleNavigate}
-      />
     </AppScreen>
   );
 }
@@ -280,14 +256,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 100,
+    paddingBottom: 100, // Tab bar is persistent
   },
   header: {
     flexDirection: "column",
     paddingHorizontal: theme.spacing[6],
     paddingTop: theme.spacing[12],
     paddingBottom: theme.spacing[4],
-    backgroundColor: "rgba(248, 246, 248, 0.8)",
+    backgroundColor: `${theme.colors.background.primary}CC`, // 80% opacity
   },
   headerTop: {
     flexDirection: "row",
@@ -298,7 +274,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     ...theme.typography.styles.h1,
     fontSize: theme.typography.fontSize["3xl"],
-    color: "#000",
+    color: theme.colors.text.primary,
   },
   profileButton: {
     width: 40,
@@ -322,14 +298,15 @@ const styles = StyleSheet.create({
     left: theme.spacing[4],
     top: 14,
     zIndex: 1,
+    color: theme.colors.text.tertiary,
   },
   searchInput: {
     width: "100%",
     padding: theme.spacing[3],
     paddingLeft: 44,
     fontSize: theme.typography.fontSize.base,
-    color: "#000",
-    backgroundColor: "#fff",
+    color: theme.colors.text.primary,
+    backgroundColor: theme.colors.background.tertiary,
     borderRadius: theme.radius.full,
     borderWidth: 0,
   },
@@ -467,11 +444,11 @@ const styles = StyleSheet.create({
     ...theme.typography.styles.body,
     fontSize: theme.typography.fontSize.md,
     fontWeight: theme.typography.fontWeight.semibold,
-    color: "#000",
+    color: theme.colors.text.primary,
   },
   recommendedSubtitle: {
     ...theme.typography.styles.caption,
-    color: "#6b7280",
+    color: theme.colors.text.tertiary,
   },
   goalsGrid: {
     flexDirection: "row",
@@ -501,11 +478,11 @@ const styles = StyleSheet.create({
     ...theme.typography.styles.body,
     fontSize: theme.typography.fontSize.md,
     fontWeight: theme.typography.fontWeight.bold,
-    color: "#000",
+    color: theme.colors.text.primary,
   },
   goalSubtitle: {
     ...theme.typography.styles.caption,
-    color: "#6b7280",
+    color: theme.colors.text.tertiary,
     marginTop: theme.spacing[1],
   },
   newArrivalsList: {
@@ -547,11 +524,11 @@ const styles = StyleSheet.create({
     ...theme.typography.styles.body,
     fontSize: theme.typography.fontSize.base,
     fontWeight: theme.typography.fontWeight.bold,
-    color: "#000",
+    color: theme.colors.text.primary,
   },
   newArrivalSubtitle: {
     ...theme.typography.styles.caption,
-    color: "#6b7280",
+    color: theme.colors.text.tertiary,
     marginTop: theme.spacing[1],
   },
   newArrivalAddButton: {
@@ -559,7 +536,7 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: theme.radius.full,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: theme.colors.border.default,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

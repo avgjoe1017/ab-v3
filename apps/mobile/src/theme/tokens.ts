@@ -29,6 +29,7 @@ export const colors = {
     secondary: "#8b5cf6",        // Purple
     tertiary: "#a855f7",         // Purple-violet
     highlight: "#FDE047",        // Yellow (play button, highlights)
+    pink: "#f472b6",              // Soft pink (homepage accent, from design inspiration)
   },
   
   // Semantic States
@@ -56,14 +57,20 @@ export const colors = {
 } as const;
 
 // Typography Scale
+// Font Families - Using Inter (neutral, confident, adult font)
+// Falls back to system font during font loading
+const fontFamily = {
+  regular: "Inter_400Regular",
+  medium: "Inter_500Medium",
+  semibold: "Inter_600SemiBold",
+  bold: "Inter_700Bold",
+  // Fallback for when fonts haven't loaded yet
+  fallback: "System",
+};
+
 export const typography = {
   // Font Families
-  fontFamily: {
-    regular: "System",  // Will use platform default
-    medium: "System",
-    semibold: "System",
-    bold: "System",
-  },
+  fontFamily,
   
   // Font Sizes
   fontSize: {
@@ -104,8 +111,102 @@ export const typography = {
     widest: 2,
   },
   
-  // Text Styles (composed styles for common patterns)
+  // Text Styles - Bespoke Typography System
+  // Following intentional, restrained approach with signature moments
   styles: {
+    // 1. AFFIRMATION TITLE (SIGNATURE MOMENT)
+    // Used ONLY for affirmation titles, main session titles, player screen title
+    // This is the emotional anchor - use sparingly and intentionally
+    affirmationTitle: {
+      fontFamily: fontFamily.semibold,
+      fontSize: 28,
+      fontWeight: "600", // Semibold
+      lineHeight: 34,
+      letterSpacing: -0.3, // Slightly tight tracking for confidence
+      color: colors.text.primary,
+    },
+    
+    // 2. SECTION HEADINGS
+    // "What do you need to hear today?", "Why this works", "Browse by Goal", screen titles
+    sectionHeading: {
+      fontFamily: fontFamily.medium,
+      fontSize: 20,
+      fontWeight: "500", // Medium - structural, not emotional
+      lineHeight: 26,
+      letterSpacing: -0.2, // Slightly tighter
+      color: colors.text.primary,
+    },
+    
+    // 3. CARD TITLES / PROGRAM TITLES
+    // Program cards, session cards in Explore, library item titles
+    cardTitle: {
+      fontFamily: fontFamily.medium,
+      fontSize: 17,
+      fontWeight: "500", // Medium
+      lineHeight: 22,
+      letterSpacing: -0.1,
+      color: colors.text.primary,
+    },
+    
+    // 4. BODY COPY (Primary Reading)
+    // Descriptions, "Why Alpha Waves Work" paragraphs, program explanations
+    body: {
+      fontFamily: fontFamily.regular,
+      fontSize: 15,
+      fontWeight: "400", // Regular
+      lineHeight: 22, // Generous for reduced cognitive load
+      letterSpacing: 0,
+      color: colors.text.secondary,
+    },
+    
+    // 5. METADATA / SUPPORTING TEXT
+    // "Alpha 10Hz · 30 min", "Recommended: Morning · Evening", categories, session counts
+    metadata: {
+      fontFamily: fontFamily.regular,
+      fontSize: 13,
+      fontWeight: "400", // Regular
+      lineHeight: 18,
+      letterSpacing: 0.1, // Slightly increased tracking for clarity
+      color: colors.text.tertiary,
+    },
+    
+    // 6. LABELS / PILLS / TAGS
+    // Category pills, filters (Sleep, Focus, Anxiety), "Beginner", "Deep Focus"
+    label: {
+      fontFamily: fontFamily.medium,
+      fontSize: 12,
+      fontWeight: "500", // Medium - prevents feeling fragile
+      lineHeight: 16,
+      letterSpacing: 0.6, // Wider tracking makes them feel deliberate
+      color: colors.text.muted,
+      // Note: No text transform - no all-caps
+    },
+    
+    // 7. BUTTONS (Primary & Secondary)
+    // "BEGIN", "Start Session", "Play Session"
+    button: {
+      fontFamily: fontFamily.medium,
+      fontSize: 15,
+      fontWeight: "500", // Medium
+      lineHeight: 20,
+      letterSpacing: 0.4,
+      // Color handled by button component
+      // Note: No text transform - let button shape do the work
+    },
+    
+    // 8. CAPTION / FOOTNOTE / EDUCATIONAL ASIDES
+    // "Research shows...", small explanatory blurbs, secondary educational notes
+    caption: {
+      fontFamily: fontFamily.regular,
+      fontSize: 12,
+      fontWeight: "400", // Regular
+      lineHeight: 18,
+      letterSpacing: 0.2,
+      color: colors.text.tertiary,
+    },
+    
+    // Legacy styles (deprecated - migrate to new system)
+    // Keep for backward compatibility during migration
     h1: {
       fontSize: 28,
       fontWeight: "600",
@@ -126,18 +227,6 @@ export const typography = {
       lineHeight: 28,
       letterSpacing: 0.5,
       color: colors.text.primary,
-    },
-    body: {
-      fontSize: 14,
-      fontWeight: "500",
-      lineHeight: 24,
-      color: colors.text.secondary,
-    },
-    caption: {
-      fontSize: 12,
-      fontWeight: "500",
-      lineHeight: 20,
-      color: colors.text.tertiary,
     },
   },
 } as const;

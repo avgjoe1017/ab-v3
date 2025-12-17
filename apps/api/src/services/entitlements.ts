@@ -1,19 +1,37 @@
 import { prisma } from "../lib/db";
 import { type EntitlementV3 } from "@ab/contracts";
+import { getRevenueCatSubscription, hasProSubscription } from "./revenuecat";
 
 const FREE_TIER_LIMITS = {
     dailyGenerations: 2,
     maxSessionLengthSec: Number.MAX_SAFE_INTEGER, // Infinite for V3 Loop
 };
 
+const PRO_TIER_LIMITS = {
+    dailyGenerations: Number.MAX_SAFE_INTEGER, // Unlimited
+    maxSessionLengthSec: Number.MAX_SAFE_INTEGER, // Infinite for V3 Loop
+};
+
 export async function getEntitlement(userId: string | null): Promise<EntitlementV3> {
-    // Mock Logic: Everyone is "Free" for now
-    // In future, check User table for "pro" flag or Stripe subscription
-
-    let remainingFreeGenerationsToday = FREE_TIER_LIMITS.dailyGenerations;
-
+    // Phase 6.3: Check RevenueCat subscription if configured
+    // Fall back to free tier if not configured or no subscription
+    let plan: "free" | "pro" = "free";
+    let source: "internal" | "revenuecat" = "internal";
+    
     if (userId) {
-        // Count sessions created by this user since midnight UTC
+        const hasPro = await hasProSubscription(userId);
+        if (hasPro) {
+            plan = "pro";
+            source = "revenuecat";
+        }
+    }
+    
+    const limits = plan === "pro" ? PRO_TIER_LIMITS : FREE_TIER_LIMITS;
+
+    let remainingFreeGenerationsToday = limits.dailyGenerations;
+
+    if (userId && plan === "free") {
+        // Count sessions created by this user since midnight UTC (only for free tier)
         const midnight = new Date();
         midnight.setUTCHours(0, 0, 0, 0);
 
@@ -24,21 +42,24 @@ export async function getEntitlement(userId: string | null): Promise<Entitlement
             }
         });
 
-        remainingFreeGenerationsToday = Math.max(0, FREE_TIER_LIMITS.dailyGenerations - count);
+        remainingFreeGenerationsToday = Math.max(0, limits.dailyGenerations - count);
+    } else if (plan === "pro") {
+        // Pro tier has unlimited generations
+        remainingFreeGenerationsToday = Number.MAX_SAFE_INTEGER;
     }
 
     return {
-        plan: "free",
+        plan,
         status: "active",
-        source: "internal",
+        source,
         limits: {
-            dailyGenerations: FREE_TIER_LIMITS.dailyGenerations,
-            maxSessionLengthSec: FREE_TIER_LIMITS.maxSessionLengthSec,
-            offlineDownloads: false, // Free tier cannot download (mock)
+            dailyGenerations: limits.dailyGenerations,
+            maxSessionLengthSec: limits.maxSessionLengthSec,
+            offlineDownloads: plan === "pro", // Pro tier can download (when implemented)
         },
         canCreateSession: remainingFreeGenerationsToday > 0,
         canGenerateAudio: remainingFreeGenerationsToday > 0,
-        remainingFreeGenerationsToday,
-        maxSessionLengthSecEffective: FREE_TIER_LIMITS.maxSessionLengthSec,
+        remainingFreeGenerationsToday: plan === "pro" ? Number.MAX_SAFE_INTEGER : remainingFreeGenerationsToday,
+        maxSessionLengthSecEffective: limits.maxSessionLengthSec,
     };
 }

@@ -12,6 +12,7 @@ import { generateTTSAudio } from "./tts";
 import { measureLoudness } from "./loudness";
 import { generateVoiceActivitySegments } from "./voiceActivity";
 import { generateAffirmations } from "../affirmation-generator";
+import { uploadToS3, generateS3Key, isS3Configured } from "../storage/s3";
 const execFileAsync = promisify(execFile);
 
 // Temporary fix for simple imports if contracts export isn't fully set up with types in this context
@@ -348,9 +349,44 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
     let mergedPath = "";
     let mergedAssetId = "";
 
-    if (existingMerged && await fs.pathExists(existingMerged.url)) {
-        mergedPath = existingMerged.url;
-        mergedAssetId = existingMerged.id;
+    // Check if existing merged file is available (either S3 URL or local file)
+    if (existingMerged) {
+        // If it's an S3 URL (starts with http/https), use it directly
+        if (existingMerged.url.startsWith("http://") || existingMerged.url.startsWith("https://")) {
+            mergedPath = existingMerged.url;
+            mergedAssetId = existingMerged.id;
+        } 
+        // If it's a local path, check if file exists
+        else if (await fs.pathExists(existingMerged.url)) {
+            mergedPath = existingMerged.url;
+            mergedAssetId = existingMerged.id;
+            
+            // If S3 is configured and we have a local file, try to upload it
+            // This handles the case where S3 was added after files were generated
+            if (isS3Configured() && !existingMerged.url.startsWith("http")) {
+                try {
+                    console.log(`[Audio] Uploading existing merged audio to S3...`);
+                    const s3Key = generateS3Key("affirmationMerged", mergedHash, "mp3");
+                    const s3Url = await uploadToS3(existingMerged.url, {
+                        key: s3Key,
+                        contentType: "audio/mpeg",
+                        cacheControl: "public, max-age=31536000",
+                    });
+                    
+                    // Update database with S3 URL
+                    await prisma.audioAsset.update({
+                        where: { id: existingMerged.id },
+                        data: { url: s3Url },
+                    });
+                    
+                    mergedPath = s3Url;
+                    console.log(`[Audio] ✅ Migrated to S3: ${s3Url}`);
+                } catch (s3Error: any) {
+                    console.warn(`[Audio] ⚠️  Failed to migrate to S3: ${s3Error.message}`);
+                    // Continue with local path
+                }
+            }
+        }
     } else {
         // Stitched output with new WAV→AAC pipeline
         console.log(`[Audio] Stitching ${filePaths.length} chunks with loop padding...`);
@@ -374,16 +410,36 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
             voiceActivity: voiceActivity.segments.length > 0 ? voiceActivity : undefined,
         });
 
+        // Upload to S3 if configured, otherwise use local path
+        let finalUrl = mergedPath;
+        if (isS3Configured()) {
+            try {
+                console.log(`[Audio] Uploading merged audio to S3...`);
+                const s3Key = generateS3Key("affirmationMerged", mergedHash, "mp3");
+                const s3Url = await uploadToS3(mergedPath, {
+                    key: s3Key,
+                    contentType: "audio/mpeg",
+                    cacheControl: "public, max-age=31536000", // 1 year cache
+                });
+                finalUrl = s3Url;
+                console.log(`[Audio] ✅ Uploaded to S3: ${s3Url}`);
+            } catch (s3Error: any) {
+                console.error(`[Audio] ⚠️  S3 upload failed, using local path: ${s3Error.message}`);
+                // Fall back to local path if S3 upload fails
+                finalUrl = mergedPath;
+            }
+        }
+
         const asset = await prisma.audioAsset.upsert({
             where: { kind_hash: { kind: "affirmationMerged", hash: mergedHash } },
             update: { 
-                url: mergedPath,
+                url: finalUrl, // Store S3 URL if available, otherwise local path
                 metaJson: metaJson,
             },
             create: {
                 kind: "affirmationMerged",
                 hash: mergedHash,
-                url: mergedPath,
+                url: finalUrl, // Store S3 URL if available, otherwise local path
                 metaJson: metaJson,
             }
         });

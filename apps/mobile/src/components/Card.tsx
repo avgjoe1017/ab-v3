@@ -4,7 +4,7 @@ import { theme } from "../theme";
 
 interface CardProps extends Omit<PressableProps, "style"> {
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: ViewStyle | ViewStyle[];
   variant?: "default" | "elevated" | "surface";
   onPress?: () => void;
 }

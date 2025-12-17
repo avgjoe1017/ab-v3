@@ -16,6 +16,7 @@ import {
 } from "../storage/onboarding";
 import { saveUserValues, saveUserStruggle } from "../lib/values";
 import StruggleInputScreen from "./StruggleInputScreen";
+import { useAuthToken } from "../lib/auth";
 
 interface OnboardingFlowProps {
   onComplete: () => void;
@@ -29,6 +30,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [selectedValues, setSelectedValues] = useState<Value[]>([]);
   const [voice, setVoice] = useState<OnboardingVoice | null>(null);
   const queryClient = useQueryClient();
+  const authToken = useAuthToken();
 
   const handleGoalNext = (selectedGoal: OnboardingGoal) => {
     setGoal(selectedGoal);
@@ -47,7 +49,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const handleValuesRankingNext = async (rankedValues: Value[]) => {
     try {
       // Save values to API
-      await saveUserValues(rankedValues);
+      await saveUserValues(rankedValues, authToken);
       setSelectedValues(rankedValues);
       setStep("struggle");
     } catch (error) {
@@ -60,7 +62,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const handleStruggleNext = async (struggle?: string) => {
     try {
       // Save struggle to API
-      await saveUserStruggle(struggle);
+      await saveUserStruggle(struggle, authToken);
       setStep("voice");
     } catch (error) {
       console.error("[Onboarding] Failed to save struggle:", error);

@@ -83,20 +83,20 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.accent.primary,
   },
   label: {
-    ...theme.typography.styles.caption,
+    ...theme.typography.styles.label,
     color: theme.colors.text.secondary,
   },
   labelPrimary: {
+    ...theme.typography.styles.label,
     color: theme.colors.text.primary,
-    fontWeight: theme.typography.fontWeight.semibold,
   },
   labelActive: {
+    ...theme.typography.styles.label,
     color: theme.colors.text.primary,
-    fontWeight: theme.typography.fontWeight.semibold,
   },
   labelPrimaryActive: {
+    ...theme.typography.styles.label,
     color: theme.colors.text.primary,
-    fontWeight: theme.typography.fontWeight.bold,
   },
   chipPressed: {
     opacity: 0.8,

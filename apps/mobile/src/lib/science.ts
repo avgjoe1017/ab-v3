@@ -19,8 +19,15 @@ export function getAllScienceCards(): ScienceCardData[] {
  */
 export function getRandomScienceCard(): ScienceCardData {
   const cards = getAllScienceCards();
+  if (cards.length === 0) {
+    throw new Error("No science cards available");
+  }
   const randomIndex = Math.floor(Math.random() * cards.length);
-  return cards[randomIndex];
+  const card = cards[randomIndex];
+  if (!card) {
+    throw new Error("Failed to get random science card");
+  }
+  return card;
 }
 
 /**

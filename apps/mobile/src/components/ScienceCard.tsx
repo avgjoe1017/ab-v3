@@ -32,7 +32,7 @@ export const ScienceCard: React.FC<ScienceCardProps> = ({
   const iconName = data.icon || "science";
 
   return (
-    <Card variant="default" style={[styles.card, style]}>
+    <Card variant="default" style={style ? [styles.card, style] : styles.card}>
       <View style={styles.content}>
         {showIcon && (
           <View style={styles.iconContainer}>

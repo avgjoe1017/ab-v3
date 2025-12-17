@@ -11,7 +11,7 @@ export interface UserValue {
   updatedAt: string;
 }
 
-export async function saveUserValues(values: Value[]): Promise<{ success: boolean; count: number }> {
+export async function saveUserValues(values: Value[], authToken?: string | null): Promise<{ success: boolean; count: number }> {
   // Map values to include rank (top 3 get ranks 1-3, rest are null)
   const valuesWithRank = values.map((value, index) => ({
     valueId: value.valueId,
@@ -19,18 +19,18 @@ export async function saveUserValues(values: Value[]): Promise<{ success: boolea
     rank: index < 3 ? index + 1 : null,
   }));
 
-  return apiPost("/me/values", { values: valuesWithRank });
+  return apiPost("/me/values", { values: valuesWithRank }, authToken);
 }
 
-export async function getUserValues(): Promise<{ values: UserValue[] }> {
-  return apiGet("/me/values");
+export async function getUserValues(authToken?: string | null): Promise<{ values: UserValue[] }> {
+  return apiGet("/me/values", authToken);
 }
 
-export async function saveUserStruggle(struggle?: string): Promise<{ success: boolean; struggle: string | null }> {
-  return apiPut("/me/struggle", { struggle: struggle || null });
+export async function saveUserStruggle(struggle?: string, authToken?: string | null): Promise<{ success: boolean; struggle: string | null }> {
+  return apiPut("/me/struggle", { struggle: struggle || null }, authToken);
 }
 
-export async function getUserStruggle(): Promise<{ struggle: string | null }> {
-  return apiGet("/me/struggle");
+export async function getUserStruggle(authToken?: string | null): Promise<{ struggle: string | null }> {
+  return apiGet("/me/struggle", authToken);
 }
 

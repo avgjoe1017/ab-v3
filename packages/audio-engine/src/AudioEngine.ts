@@ -1,6 +1,11 @@
 import { type PlaybackBundleVM } from "@ab/contracts";
 import type { AudioEngineSnapshot, Mix } from "./types";
-import { createAudioPlayer, type AudioPlayer } from "expo-audio";
+import { 
+  createAudioPlayer, 
+  type AudioPlayer,
+  setAudioModeAsync,
+  setIsAudioActiveAsync
+} from "expo-audio";
 import { Platform } from "react-native";
 import { GainSmoother } from "./smoothing";
 import { VoiceActivityDucker } from "./ducking";
@@ -71,6 +76,9 @@ export class AudioEngine {
   
   // Drift correction
   private lastDriftCheck: number = 0;
+  
+  // Audio session configuration
+  private audioSessionReady: Promise<void> | null = null;
 
   constructor() {
     // Config audio module if needed (e.g. background mode)
@@ -174,18 +182,22 @@ export class AudioEngine {
     }
 
     // Update intro automation multipliers (only during initial play, not during crossfade)
+    // Rolling start: Background first, then binaural, then affirmations
+    // Each layer fades in gradually for a smooth, professional intro
     if (this.sessionStartTime > 0 && !this.isCrossfading) {
       const elapsed = now - this.sessionStartTime;
       
-      // Background: 0 to 100% over 1200ms
-      this.automationMultipliers.background = Math.min(1, elapsed / 1200);
+      // Background: starts immediately, fades in over 4000ms (4 seconds)
+      this.automationMultipliers.background = Math.min(1, elapsed / 4000);
       
-      // Binaural: 0 to 100% over 2000ms
-      this.automationMultipliers.binaural = Math.min(1, elapsed / 2000);
+      // Binaural: starts after 2000ms delay, fades in over 4000ms
+      const binElapsed = Math.max(0, elapsed - 2000);
+      this.automationMultipliers.binaural = Math.min(1, binElapsed / 4000);
       
-      // Affirmations: 0 to 100% over 900ms (with 200ms delay)
-      const affElapsed = Math.max(0, elapsed - 200);
-      this.automationMultipliers.affirmations = Math.min(1, affElapsed / 900);
+      // Affirmations: starts after 5000ms delay, fades in over 3000ms
+      // This ensures background and binaural are well-established before voice comes in
+      const affElapsed = Math.max(0, elapsed - 5000);
+      this.automationMultipliers.affirmations = Math.min(1, affElapsed / 3000);
     } else if (this.isCrossfading) {
       // During crossfade, automation is handled by crossfade curve
       // Set to 1.0 so crossfade curve controls everything
@@ -270,10 +282,189 @@ export class AudioEngine {
       this.prerollPlayer.volume = this.prerollSmoother.update(dtMs);
     }
 
-    // Drift correction (every 5 seconds)
-    if (status === "playing" && now - this.lastDriftCheck > 5000) {
+    // Drift correction (every 10 seconds - less frequent to avoid gaps)
+    // Skip drift correction for the first 30 seconds to avoid gaps during intro
+    const timeSinceStart = this.sessionStartTime > 0 ? now - this.sessionStartTime : Infinity;
+    if (status === "playing" && timeSinceStart > 30000 && now - this.lastDriftCheck > 10000) {
       this.correctDrift();
       this.lastDriftCheck = now;
+    }
+  }
+
+  /**
+   * Ensure audio session is configured (plays in silent mode, doesn't randomly stall)
+   */
+  private ensureAudioSession(): Promise<void> {
+    if (this.audioSessionReady) return this.audioSessionReady;
+
+    this.audioSessionReady = (async () => {
+      console.log("[AudioEngine] Configuring audio session...");
+      try {
+        console.log("[AudioEngine] Calling setIsAudioActiveAsync(true)...");
+        await setIsAudioActiveAsync(true);
+        console.log("[AudioEngine] ✅ setIsAudioActiveAsync(true) completed");
+      } catch (e) {
+        console.error("[AudioEngine] ❌ setIsAudioActiveAsync failed:", e);
+        throw e;
+      }
+      
+      try {
+        console.log("[AudioEngine] Calling setAudioModeAsync...");
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          interruptionModeAndroid: "duckOthers",
+          interruptionMode: "mixWithOthers",
+        });
+        console.log("[AudioEngine] ✅ setAudioModeAsync completed");
+      } catch (e) {
+        console.error("[AudioEngine] ❌ setAudioModeAsync failed:", e);
+        throw e;
+      }
+      
+      console.log("[AudioEngine] ✅ Audio session configured successfully");
+    })().catch((e) => {
+      console.error("[AudioEngine] ❌ Audio session config failed:", e);
+      // Don't swallow the error completely - log it clearly
+    });
+
+    return this.audioSessionReady;
+  }
+
+  /**
+   * Wait for a single player to be loaded and ready to play
+   * Uses playbackStatusUpdate listener and duration check to detect when ready
+   * Note: This should be called AFTER play() to wait for the player to load
+   */
+  private async waitForPlayerReady(
+    player: AudioPlayer,
+    playerName: string,
+    maxWaitMs: number = 10000
+  ): Promise<void> {
+    // Fast path - check if already ready (has valid duration or is playing)
+    if (player.duration > 0 || player.playing) {
+      console.log(`[AudioEngine] ${playerName} already ready (duration: ${player.duration}, playing: ${player.playing})`);
+      return;
+    }
+
+    console.log(`[AudioEngine] Waiting for ${playerName} to load...`);
+
+    return new Promise((resolve, reject) => {
+      let done = false;
+
+      const cleanup = (listener?: any) => {
+        clearTimeout(timeout);
+        clearInterval(poll);
+        try {
+          if (listener?.remove) listener.remove();
+          else player.removeListener("playbackStatusUpdate", onStatus);
+        } catch {}
+      };
+
+      const checkReady = (): boolean => {
+        // Check multiple indicators that player is ready:
+        // 1. Valid duration (> 0)
+        // 2. isLoaded property (if available)
+        // 3. Actually playing
+        // 4. Not buffering (if buffering is false and we have some state, consider ready)
+        const hasDuration = player.duration > 0 && !isNaN(player.duration);
+        const isLoaded = (player as any).isLoaded === true;
+        const isPlaying = player.playing;
+        const isNotBuffering = (player as any).isBuffering === false;
+        
+        // If we have duration or is loaded, we're ready
+        if (hasDuration || isLoaded) {
+          return true;
+        }
+        
+        // If playing, we're definitely ready
+        if (isPlaying) {
+          return true;
+        }
+        
+        // If not buffering and we've been waiting a bit, might be ready (for network files)
+        // This helps with files that load but don't set isLoaded immediately
+        return false; // Conservative - only return true if we have clear indicators
+      };
+
+      const timeout = setTimeout(() => {
+        if (done) return;
+        done = true;
+
+        console.error(`[AudioEngine] ❌ Timeout waiting for ${playerName} to load (${maxWaitMs}ms)`);
+        console.error(`[AudioEngine] Debug:`, {
+          isLoaded: (player as any).isLoaded,
+          isBuffering: (player as any).isBuffering,
+          playing: player.playing,
+          duration: player.duration,
+          currentTime: player.currentTime,
+          timeControlStatus: (player as any).timeControlStatus,
+          reasonForWaitingToPlay: (player as any).reasonForWaitingToPlay,
+        });
+
+        cleanup(listener);
+        reject(new Error(`Timeout waiting for ${playerName} to load (${maxWaitMs}ms)`));
+      }, maxWaitMs);
+
+      const poll = setInterval(() => {
+        if (done) return;
+        if (checkReady()) {
+          done = true;
+          console.log(`[AudioEngine] ✅ ${playerName} ready (poll) - duration: ${player.duration}, playing: ${player.playing}`);
+          cleanup(listener);
+          resolve();
+        }
+      }, 100);
+
+      const onStatus = (status: any) => {
+        if (done) return;
+
+        if (status?.hasError || status?.error) {
+          done = true;
+          console.error(`[AudioEngine] ❌ ${playerName} status error:`, status?.error || status);
+          cleanup(listener);
+          reject(new Error(status?.error || `Failed to load ${playerName}`));
+          return;
+        }
+
+        // Check if ready via status update
+        const statusIsLoaded = status?.isLoaded === true;
+        const statusHasDuration = status?.duration > 0 && !isNaN(status.duration);
+        const statusIsPlaying = status?.playing === true;
+
+        if (statusIsLoaded || statusHasDuration || statusIsPlaying || checkReady()) {
+          done = true;
+          console.log(`[AudioEngine] ✅ ${playerName} ready (event) - duration: ${player.duration}, status duration: ${status?.duration}, playing: ${player.playing}`);
+          cleanup(listener);
+          resolve();
+        }
+      };
+
+      const listener = player.addListener("playbackStatusUpdate", onStatus);
+    });
+  }
+
+  /**
+   * Wait for all players to be ready (metadata loaded)
+   * Returns a promise that resolves when all players have valid durations
+   */
+  private async waitForPlayersReady(): Promise<void> {
+    console.log("[AudioEngine] Waiting for players to load metadata...");
+    
+    if (!this.affPlayer || !this.binPlayer || !this.bgPlayer) {
+      throw new Error("Cannot wait for players - not all players are created");
+    }
+
+    try {
+      await Promise.all([
+        this.waitForPlayerReady(this.affPlayer, "Affirmations"),
+        this.waitForPlayerReady(this.binPlayer, "Binaural"),
+        this.waitForPlayerReady(this.bgPlayer, "Background")
+      ]);
+      console.log("[AudioEngine] ✅ All players ready");
+    } catch (error) {
+      console.error("[AudioEngine] ❌ Error waiting for players:", error);
+      throw error;
     }
   }
 
@@ -287,22 +478,24 @@ export class AudioEngine {
     const binDuration = this.binPlayer.duration || 1;
     const bgDuration = this.bgPlayer.duration || 1;
 
-    // Check binaural drift
+    // Check binaural drift - only correct if drift is significant to avoid gaps
     const binTime = this.binPlayer.currentTime;
     const binExpected = affTime % binDuration;
     const binDrift = Math.abs(binTime - binExpected);
     
-    if (binDrift > 0.08) { // 80ms threshold
+    // Increased threshold to 200ms - only correct significant drift to avoid audible gaps
+    if (binDrift > 0.2) {
       console.log(`[AudioEngine] Correcting binaural drift: ${(binDrift * 1000).toFixed(0)}ms`);
       this.binPlayer.seekTo(binExpected);
     }
 
-    // Check background drift
+    // Check background drift - only correct if drift is significant
     const bgTime = this.bgPlayer.currentTime;
     const bgExpected = affTime % bgDuration;
     const bgDrift = Math.abs(bgTime - bgExpected);
     
-    if (bgDrift > 0.08) { // 80ms threshold
+    // Increased threshold to 200ms - only correct significant drift to avoid audible gaps
+    if (bgDrift > 0.2) {
       console.log(`[AudioEngine] Correcting background drift: ${(bgDrift * 1000).toFixed(0)}ms`);
       this.bgPlayer.seekTo(bgExpected);
     }
@@ -311,6 +504,9 @@ export class AudioEngine {
   load(bundle: PlaybackBundleVM): Promise<void> {
     console.log("[AudioEngine] load() method called");
     return this.enqueue(async () => {
+      // Ensure audio session is configured before loading
+      await this.ensureAudioSession();
+      
       console.log("[AudioEngine] load() enqueued, executing...");
       console.log("[AudioEngine] load() called, current status:", this.snapshot.status);
       
@@ -379,6 +575,22 @@ export class AudioEngine {
           background: getUrl(bundle.background)
         };
         console.log("[AudioEngine] URLs:", urls);
+
+        // DEBUG: Test URL reachability before creating players
+        console.log("[AudioEngine] Testing URL reachability...");
+        for (const [name, url] of Object.entries(urls)) {
+          try {
+            console.log(`[AudioEngine] Testing ${name}: ${url}`);
+            const response = await fetch(url, { method: "HEAD" });
+            console.log(`[AudioEngine] ✅ ${name} reachable: ${response.status} ${response.statusText}`);
+            console.log(`[AudioEngine]    Content-Type: ${response.headers.get("content-type")}`);
+            console.log(`[AudioEngine]    Content-Length: ${response.headers.get("content-length")}`);
+          } catch (fetchError) {
+            console.error(`[AudioEngine] ❌ ${name} NOT reachable:`, fetchError);
+            console.error(`[AudioEngine]    URL was: ${url}`);
+          }
+        }
+        console.log("[AudioEngine] URL reachability test complete");
 
         // 1. Create Players
         // Affirmations (Track A) - V3: Should loop infinitely per Loop-and-delivery.md
@@ -453,9 +665,9 @@ export class AudioEngine {
           }
         });
 
-        // 3. Wait for Ready (optional, simple verify duration)
-        // Note: expo-audio loads lazily usually, but we can verify status?
-        // Let's assume ready for V3 speed.
+        // 3. Note: expo-audio loads files when play() is called, not when players are created
+        // We can't wait for duration here since it won't be available until after play()
+        console.log("[AudioEngine] Players created, will verify loading when play() is called");
 
         // Listen for playback status updates to extract duration
         // V3: Affirmations loop infinitely, so didJustFinish should not occur
@@ -638,6 +850,9 @@ export class AudioEngine {
 
   play(): Promise<void> {
     return this.enqueue(async () => {
+      // Ensure audio session is configured before playing
+      await this.ensureAudioSession();
+      
       // If idle, start pre-roll immediately (within 100-300ms)
       if (this.snapshot.status === "idle") {
         this.setState({ status: "preroll" });
@@ -767,116 +982,141 @@ export class AudioEngine {
         
         console.log("[AudioEngine] Step 1: Starting background player...");
         const bgUrl = this.currentBundle && getUrl ? getUrl(this.currentBundle.background) : "unknown";
-        console.log("[AudioEngine] Background player before play():", {
-          uri: bgUrl,
-          duration: this.bgPlayer!.duration,
-          playing: this.bgPlayer!.playing,
-          volume: this.bgPlayer!.volume,
-        });
+        console.log("[AudioEngine] Background URL:", bgUrl);
         
         try {
+          // Call play() to trigger loading
+          console.log("[AudioEngine] Calling play() on background player...");
           await this.bgPlayer!.play();
-          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
+          console.log("[AudioEngine] Background play() called, waiting for ready...");
           
-          // Verify background is playing
+          // Wait for ready with shorter timeout - network files should load quickly from S3
+          try {
+            await this.waitForPlayerReady(this.bgPlayer!, "Background", 5000); // Reduced to 5s
+          } catch (waitError) {
+            console.warn("[AudioEngine] ⚠️  Background waitForPlayerReady timed out, but continuing anyway");
+            // Don't wait - just continue
+          }
+          
+          // Quick retry if not playing
           if (!this.bgPlayer!.playing) {
-            console.warn("[AudioEngine] ⚠️  Background player not playing, retrying...");
-            console.log("[AudioEngine] Background player state before retry:", {
+            await this.bgPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200)); // Reduced wait
+          }
+          
+          if (this.bgPlayer!.playing) {
+            console.log("[AudioEngine] ✅ Background started, intro automation will fade in over 4s");
+          } else {
+            console.error("[AudioEngine] ❌ Background player failed to start after multiple attempts!");
+            console.error("[AudioEngine] Check if audio file exists and is accessible:", bgUrl);
+            console.error("[AudioEngine] Possible issues:");
+            console.error("[AudioEngine]   1. Network connectivity - device can't reach server");
+            console.error("[AudioEngine]   2. CORS issues - check server CORS headers");
+            console.error("[AudioEngine]   3. iOS App Transport Security - HTTP URLs may be blocked");
+            console.error("[AudioEngine]   4. File doesn't exist at path");
+            console.error("[AudioEngine] Player state:", {
               duration: this.bgPlayer!.duration,
               playing: this.bgPlayer!.playing,
-              volume: this.bgPlayer!.volume,
+              currentTime: this.bgPlayer!.currentTime,
+              isBuffering: (this.bgPlayer as any).isBuffering,
+              isLoaded: (this.bgPlayer as any).isLoaded,
             });
-            await this.bgPlayer!.pause();
-            await new Promise(resolve => setTimeout(resolve, 100));
-            await this.bgPlayer!.play();
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            if (!this.bgPlayer!.playing) {
-              console.error("[AudioEngine] ❌ Background player failed to start after retry!");
-              console.error("[AudioEngine] Check if audio file exists and is accessible:", bgUrl);
-            }
+            // Continue anyway - control loop will handle it
+            console.warn("[AudioEngine] Continuing playback - background may start later");
           }
         } catch (error) {
           console.error("[AudioEngine] ❌ Error starting background player:", error);
           console.error("[AudioEngine] Audio file URL:", bgUrl);
+          // Continue anyway - don't block other players
         }
         
-        console.log("[AudioEngine] ✅ Background started, intro automation will fade in over 1200ms");
-        
-        // Wait 1 second before starting binaural
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Brief pause before starting binaural (staggered start)
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         console.log("[AudioEngine] Step 2: Starting binaural player...");
         const binUrl = this.currentBundle && getUrl ? getUrl(this.currentBundle.binaural) : "unknown";
-        console.log("[AudioEngine] Binaural player before play():", {
-          uri: binUrl,
-          duration: this.binPlayer!.duration,
-          playing: this.binPlayer!.playing,
-          volume: this.binPlayer!.volume,
-        });
+        console.log("[AudioEngine] Binaural URL:", binUrl);
         
         try {
+          // Call play() to trigger loading
+          console.log("[AudioEngine] Calling play() on binaural player...");
           await this.binPlayer!.play();
-          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
+          console.log("[AudioEngine] Binaural play() called, waiting for ready...");
           
-          // Verify binaural is playing
+          // Wait for ready with shorter timeout
+          try {
+            await this.waitForPlayerReady(this.binPlayer!, "Binaural", 5000); // Reduced to 5s
+          } catch (waitError) {
+            console.warn("[AudioEngine] ⚠️  Binaural waitForPlayerReady timed out, but continuing anyway");
+            // Don't wait - just continue
+          }
+          
+          // Quick retry if not playing
           if (!this.binPlayer!.playing) {
-            console.warn("[AudioEngine] ⚠️  Binaural player not playing, retrying...");
-            console.log("[AudioEngine] Binaural player state before retry:", {
+            await this.binPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200)); // Reduced wait
+          }
+          
+          if (this.binPlayer!.playing) {
+            console.log("[AudioEngine] ✅ Binaural started, intro automation will fade in over 4s (after 2s delay)");
+          } else {
+            console.error("[AudioEngine] ❌ Binaural player failed to start after multiple attempts!");
+            console.error("[AudioEngine] Check if audio file exists and is accessible:", binUrl);
+            console.error("[AudioEngine] Possible issues:");
+            console.error("[AudioEngine]   1. Network connectivity - device can't reach server");
+            console.error("[AudioEngine]   2. CORS issues - check server CORS headers");
+            console.error("[AudioEngine]   3. iOS App Transport Security - HTTP URLs may be blocked");
+            console.error("[AudioEngine]   4. File doesn't exist at path");
+            console.error("[AudioEngine] Player state:", {
               duration: this.binPlayer!.duration,
               playing: this.binPlayer!.playing,
-              volume: this.binPlayer!.volume,
+              currentTime: this.binPlayer!.currentTime,
+              isBuffering: (this.binPlayer as any).isBuffering,
+              isLoaded: (this.binPlayer as any).isLoaded,
             });
-            await this.binPlayer!.pause();
-            await new Promise(resolve => setTimeout(resolve, 100));
-            await this.binPlayer!.play();
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            if (!this.binPlayer!.playing) {
-              console.error("[AudioEngine] ❌ Binaural player failed to start after retry!");
-              console.error("[AudioEngine] Check if audio file exists and is accessible:", binUrl);
-            }
+            // Continue anyway - control loop will handle it
+            console.warn("[AudioEngine] Continuing playback - binaural may start later");
           }
         } catch (error) {
           console.error("[AudioEngine] ❌ Error starting binaural player:", error);
           console.error("[AudioEngine] Audio file URL:", binUrl);
+          // Continue anyway - don't block other players
         }
         
-        console.log("[AudioEngine] ✅ Binaural started, intro automation will fade in over 2000ms");
-        
-        // Wait 1 second before starting affirmations
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Brief pause before starting affirmations (staggered start)
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         console.log("[AudioEngine] Step 3: Starting affirmations player...");
         const affUrl = this.currentBundle?.affirmationsMergedUrl || "unknown";
-        console.log("[AudioEngine] Affirmations player before play():", {
-          uri: affUrl,
-          duration: this.affPlayer!.duration,
-          playing: this.affPlayer!.playing,
-          volume: this.affPlayer!.volume,
-        });
         
         try {
+          // Call play() to trigger loading, then wait for it to be ready
           await this.affPlayer!.play();
-          await new Promise(resolve => setTimeout(resolve, 200)); // Wait longer for player to start
           
-          // Verify affirmations is playing
+          // Wait for ready with shorter timeout
+          try {
+            await this.waitForPlayerReady(this.affPlayer!, "Affirmations", 5000); // Reduced to 5s
+          } catch (waitError) {
+            console.warn("[AudioEngine] ⚠️  Affirmations waitForPlayerReady timed out, but continuing anyway");
+            // Don't wait - just continue
+          }
+          
+          // Quick retry if not playing
           if (!this.affPlayer!.playing) {
-            console.warn("[AudioEngine] ⚠️  Affirmations player not playing, retrying...");
-            console.log("[AudioEngine] Affirmations player state before retry:", {
+            await this.affPlayer!.play();
+            await new Promise(resolve => setTimeout(resolve, 200)); // Reduced wait
+          }
+          
+          if (this.affPlayer!.playing) {
+            console.log("[AudioEngine] ✅ Affirmations started");
+          } else {
+            console.error("[AudioEngine] ❌ Affirmations player failed to start after loading!");
+            console.error("[AudioEngine] Check if file exists and is accessible:", affUrl);
+            console.error("[AudioEngine] Player state:", {
               duration: this.affPlayer!.duration,
               playing: this.affPlayer!.playing,
-              volume: this.affPlayer!.volume,
+              currentTime: this.affPlayer!.currentTime
             });
-            await this.affPlayer!.pause();
-            await new Promise(resolve => setTimeout(resolve, 100));
-            await this.affPlayer!.play();
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            if (!this.affPlayer!.playing) {
-              console.error("[AudioEngine] ❌ Affirmations player failed to start after retry!");
-              console.error("[AudioEngine] Check if audio file exists and is accessible:", affUrl);
-            }
           }
         } catch (error) {
           console.error("[AudioEngine] ❌ Error starting affirmations player:", error);
@@ -981,11 +1221,22 @@ export class AudioEngine {
     this.prerollSmoother.reset(this.prerollPlayer.volume);
 
     // Play main tracks simultaneously (muted initially, control loop will fade in)
+    // Call play() to trigger loading
     await Promise.all([
       this.affPlayer.play(),
       this.binPlayer.play(),
       this.bgPlayer.play()
     ]);
+
+    // Wait for all players to be ready before starting crossfade
+    console.log("[AudioEngine] Waiting for main tracks to load before crossfade...");
+    try {
+      await this.waitForPlayersReady();
+      console.log("[AudioEngine] ✅ All main tracks loaded, starting crossfade");
+    } catch (error) {
+      console.error("[AudioEngine] ❌ Error waiting for main tracks to load:", error);
+      // Continue anyway - players may still work
+    }
 
     // Start crossfade (control loop will handle the equal-power curve)
     this.isCrossfading = true;

@@ -30,7 +30,7 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   style,
 }) => {
   const height = size === "sm" ? 44 : size === "md" ? 56 : 64;
-  const fontSize = size === "sm" ? 14 : size === "md" ? 18 : 20;
+  // Use button typography style - size variants maintain accessibility
   const iconSize = size === "sm" ? 18 : size === "md" ? 24 : 28;
 
   const buttonContent = (
@@ -38,7 +38,7 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
       {icon && iconPosition === "left" && (
         <MaterialIcons name={icon} size={iconSize} color="#fff" />
       )}
-      <Text style={[styles.label, { fontSize }]}>{label}</Text>
+      <Text style={styles.label}>{label}</Text>
       {icon && iconPosition === "right" && (
         <MaterialIcons name={icon} size={iconSize} color="#fff" />
       )}
@@ -135,9 +135,8 @@ const styles = StyleSheet.create({
     gap: theme.spacing[2],
   },
   label: {
+    ...theme.typography.styles.button,
     color: theme.colors.text.primary,
-    fontWeight: theme.typography.fontWeight.bold,
-    letterSpacing: theme.typography.letterSpacing.wide,
   },
   buttonPressed: {
     opacity: 0.8,

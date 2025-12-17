@@ -100,7 +100,7 @@ export const EntitlementV3Schema = z.object({
   plan: z.enum(["free", "pro"]),
   status: z.enum(["active", "grace", "expired", "unknown"]),
   renewsAt: z.string().datetime().optional(),
-  source: z.enum(["apple", "google", "stripe", "internal"]).optional(),
+  source: z.enum(["apple", "google", "stripe", "internal", "revenuecat"]).optional(), // Phase 6.3: Added revenuecat
   limits: z.object({
     dailyGenerations: z.number().int().min(0),
     maxSessionLengthSec: z.number().int().min(0),

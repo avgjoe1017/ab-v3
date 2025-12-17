@@ -3942,3 +3942,860 @@ const [voice, setVoice] = useState<OnboardingVoice | null>(null);
 - Pattern established for migrating remaining endpoints
 
 **Status**: ⏳ **Phase 6.1 In Progress** - Authentication foundation complete, ready for Clerk integration. 3 of 16 endpoints migrated. Remaining work: Complete endpoint migration, integrate Clerk SDK, update mobile app.
+
+---
+
+## 2025-01-15 - Phase 6: Production Readiness - Continued Implementation
+
+**Decision**: Continue Phase 6 implementation with Clerk integration structure, database migration tools, and S3 storage foundation.
+
+**Why**: Completing the foundational code structure for all Phase 6 components allows for easier integration when external services are configured. This enables parallel work and faster deployment when ready.
+
+**Delivered**:
+
+**1. Clerk Integration Structure (Phase 6.1)**:
+- Created `apps/api/src/lib/clerk.ts` with:
+  - `verifyClerkToken()` function (ready for @clerk/backend integration)
+  - `getClerkClient()` helper
+  - `isClerkConfigured()` check
+  - All functions documented with TODOs for when Clerk SDK is installed
+- Updated `apps/api/src/lib/auth.ts` to:
+  - Make `getUserId()` async to support Clerk token verification
+  - Check if Clerk is configured and use it if available
+  - Fall back to default user ID for development
+- Updated all endpoint handlers to use `await getUserId(c)` (all 16 instances)
+- Updated middleware to handle async `getUserId()`
+
+**2. Database Migration Tools (Phase 6.2)**:
+- Created `apps/api/prisma/migrate-to-postgres.ts` migration script with:
+  - Connects to both SQLite (source) and Postgres (target)
+  - Migrates all tables: User, Session, SessionAffirmation, UserValue, AudioAsset, SessionAudio, Job
+  - Uses upsert to handle existing records
+  - Verifies record counts after migration
+  - Error handling and rollback guidance
+- Created `apps/api/prisma/migrate-to-postgres.md` with:
+  - Step-by-step migration instructions
+  - Prerequisites checklist
+  - Rollback plan
+  - Post-migration verification steps
+
+**3. S3 Storage Foundation (Phase 6.4)**:
+- Created `apps/api/src/services/storage/s3.ts` with:
+  - `uploadToS3()` function (ready for @aws-sdk/client-s3 integration)
+  - `fileExistsInS3()` function
+  - `getS3Url()` function (supports CloudFront URLs)
+  - `generateS3Key()` helper for consistent file naming
+  - `isS3Configured()` check
+  - All functions documented with TODOs for when AWS SDK is installed
+  - Supports CloudFront CDN URLs when configured
+
+**Files Created**:
+- `apps/api/src/lib/clerk.ts` - Clerk integration structure
+- `apps/api/prisma/migrate-to-postgres.ts` - Database migration script
+- `apps/api/prisma/migrate-to-postgres.md` - Migration instructions
+- `apps/api/src/services/storage/s3.ts` - S3 upload service
+
+**Files Modified**:
+- `apps/api/src/lib/auth.ts` - Made async, added Clerk support
+- `apps/api/src/middleware/auth.ts` - Updated for async getUserId
+- `apps/api/src/index.ts` - All getUserId calls now use await
+
+**Integration Status**:
+- **Clerk**: Code structure ready, requires `pnpm add @clerk/backend` and API keys
+- **Postgres**: Migration script ready, requires Supabase/Neon database URL
+- **S3**: Upload service ready, requires `pnpm add @aws-sdk/client-s3` and AWS credentials
+
+**Next Steps**:
+1. **Phase 6.1**: Install Clerk SDK and configure API keys, uncomment code in `clerk.ts`
+2. **Phase 6.2**: Set up Supabase Postgres, run migration script
+3. **Phase 6.3**: Set up RevenueCat and integrate subscription checks
+4. **Phase 6.4**: Install AWS SDK, configure S3 bucket and CloudFront, update audio generation to use S3
+
+**Impact**:
+- All Phase 6 components have foundational code structure
+- Easy to enable when external services are configured
+- Clear separation between development (default user, local files) and production (Clerk, S3)
+- Migration tools ready for database transition
+- No breaking changes - everything works in development mode
+
+**Status**: ✅ **Phase 6 Foundation Complete** - All code structures in place for authentication, database migration, and cloud storage. Ready for external service configuration and SDK installation. Phase 6.3 (Payments) documentation complete in PRODUCTION_INSTRUCTIONS.md.
+
+---
+
+## 2025-01-15 - Phase 6: Production Readiness - RevenueCat & Production Improvements
+
+**Decision**: Complete Phase 6.3 (Payments) code structure and add production-ready middleware and configuration management.
+
+**Why**: RevenueCat integration completes the subscription system foundation. Production middleware (CORS, error handling) and centralized configuration improve code quality and deployment readiness.
+
+**Delivered**:
+
+**1. RevenueCat Integration (Phase 6.3)**:
+- Created `apps/api/src/services/revenuecat.ts` with:
+  - `getRevenueCatSubscription()` function (ready for RevenueCat API integration)
+  - `hasProSubscription()` helper
+  - `isRevenueCatConfigured()` check
+  - Documented TODOs for RevenueCat API integration
+- Updated `apps/api/src/services/entitlements.ts` to:
+  - Check RevenueCat subscriptions when configured
+  - Support both free and pro tiers
+  - Pro tier gets unlimited daily generations
+  - Falls back to free tier if RevenueCat not configured
+
+**2. Configuration Management**:
+- Created `apps/api/src/lib/config.ts` with:
+  - Centralized configuration object
+  - Environment variable helpers (`getEnv`, `getEnvOptional`)
+  - Environment detection (`isProduction`, `isDevelopment`)
+  - Configuration checks for all Phase 6 services (Clerk, RevenueCat, S3)
+  - Type-safe configuration access
+
+**3. Production Middleware**:
+- Created `apps/api/src/middleware/cors.ts` with:
+  - CORS middleware for cross-origin requests
+  - Development: allows all origins
+  - Production: configurable allowed origins via `ALLOWED_ORIGINS`
+  - Proper preflight handling
+- Created `apps/api/src/middleware/error-handler.ts` with:
+  - Global error handler
+  - Standardized error response format
+  - Stack traces only in development
+  - Proper error logging
+
+**4. Integration Updates**:
+- Updated `apps/api/src/index.ts` to:
+  - Use centralized config for port
+  - Apply CORS middleware globally
+  - Apply error handler globally
+  - Log configuration status on startup
+
+**Files Created**:
+- `apps/api/src/services/revenuecat.ts` - RevenueCat integration structure
+- `apps/api/src/lib/config.ts` - Configuration management
+- `apps/api/src/middleware/cors.ts` - CORS middleware
+- `apps/api/src/middleware/error-handler.ts` - Error handling middleware
+
+**Files Modified**:
+- `apps/api/src/services/entitlements.ts` - Added RevenueCat subscription checks, pro tier support
+- `apps/api/src/index.ts` - Added middleware, config integration
+
+**Subscription Tiers**:
+- **Free Tier**: 2 sessions per day, all other features
+- **Pro Tier**: Unlimited sessions, offline downloads (when implemented)
+
+**Production Features Added**:
+- ✅ CORS support for mobile app
+- ✅ Centralized error handling
+- ✅ Environment-aware configuration
+- ✅ Configuration status logging
+- ✅ Type-safe config access
+
+**Impact**:
+- RevenueCat integration ready when API key is configured
+- Production-ready middleware in place
+- Better error handling and logging
+- Centralized configuration makes deployment easier
+- All Phase 6 components now have complete code structures
+
+**Status**: ✅ **Phase 6 Complete** - All foundational code structures in place for authentication (Clerk), database migration, payments (RevenueCat), and cloud storage (S3). Production middleware and configuration management complete. Ready for external service configuration and SDK installation.
+
+---
+
+## Design System Analysis (2025-01-27)
+
+**Goal**: Gain deep understanding of the app's design system by analyzing design inspiration files and comparing with current implementation.
+
+**Delivered**:
+- ✅ Comprehensive analysis of design inspiration files (homepage, explore, player)
+- ✅ Comparison of design inspiration with current theme implementation
+- ✅ Color system analysis (backgrounds, text, accents, gradients)
+- ✅ Typography analysis (fonts, sizes, weights, styles)
+- ✅ Spacing and layout system review
+- ✅ Component design pattern analysis
+- ✅ Screen-specific design notes
+- ✅ Gap analysis identifying missing features and inconsistencies
+- ✅ Design system documentation created (`MD_DOCS/DESIGN_SYSTEM_ANALYSIS.md`)
+
+**Key Findings**:
+
+1. **Color System**: Well-aligned with inspiration, using dark slate backgrounds (`#0f172a`), indigo/purple accents (`#6366f1`, `#8b5cf6`), and yellow highlights (`#FDE047`). Minor gap: Explore screen uses light background vs. dark in inspiration.
+
+2. **Typography**: Current implementation uses system fonts, while design inspiration uses custom fonts (Spline Sans, Noto Sans, Lora, Nunito). Hero question should use serif italic font (Lora) but currently uses system font.
+
+3. **Components**: Most components are well-implemented and match design inspiration. Key gaps:
+   - "Hear a different affirmation" functionality not implemented
+   - Continue Practice section is placeholder
+   - Hero question typography doesn't match inspiration
+
+4. **Screen Alignment**:
+   - **HomeScreen**: ✅ Mostly aligned, missing serif italic for hero question
+   - **ExploreScreen**: ⚠️ Uses light background vs. dark in inspiration
+   - **PlayerScreen**: ✅ Well-aligned with inspiration, all key features implemented
+
+5. **Design System Strengths**:
+   - Centralized theme tokens
+   - Comprehensive component library
+   - Consistent spacing system (4px base unit)
+   - Accessibility considerations (44px tap targets)
+
+**Recommendations**:
+- High Priority: Consider custom fonts (Spline Sans, Lora for hero text)
+- High Priority: Align Explore screen background with dark theme or document intentional difference
+- Medium Priority: Add soft pink accent color if needed for homepage
+- Low Priority: Document animation patterns
+
+**Impact**:
+- Clear understanding of design vision vs. current implementation
+- Identified gaps and inconsistencies
+- Foundation for design system improvements
+- Documentation for future design decisions
+
+**Status**: ✅ **Complete** - Comprehensive design system analysis documented. Ready for design system improvements and feature completion.
+
+---
+
+## Navigation Improvements (2025-01-27)
+
+**Goal**: Smooth out page transitions between main pages and make bottom menu persistent across the four main pages.
+
+**Delivered**:
+- ✅ Installed `@react-navigation/bottom-tabs` (v6.5.20 compatible with React Navigation v6)
+- ✅ Created `MainTabs` tab navigator for the 4 main pages (Today, Explore, Programs, Library)
+- ✅ Moved bottom tabs to persistent location in App.tsx (no longer re-rendered per screen)
+- ✅ Configured smooth transitions with `lazy: false` (tabs stay mounted for instant switching)
+- ✅ Removed `BottomTabs` component from individual screens (HomeScreen, ExploreScreen)
+- ✅ Updated navigation calls to use `navigation.getParent()` for stack navigation from tabs
+- ✅ Removed back buttons from ProgramsListScreen and LibraryScreen (they're now tabs)
+- ✅ Added badge indicator to Today tab when active
+- ✅ Configured stack navigator with smooth slide animations (250ms duration)
+- ✅ Adjusted screen padding to account for persistent tab bar
+
+**Navigation Structure**:
+```
+NavigationContainer
+└── Stack Navigator (for detail screens)
+    ├── MainTabs (Tab Navigator) - 4 main pages
+    │   ├── Today (HomeScreen)
+    │   ├── Explore (ExploreScreen)
+    │   ├── Programs (ProgramsListScreen)
+    │   └── Library (LibraryScreen)
+    └── Stack Screens (detail screens)
+        ├── Player
+        ├── SessionDetail
+        ├── ProgramDetail
+        ├── SOS
+        ├── Editor
+        └── Settings
+```
+
+**Key Improvements**:
+1. **Persistent Tab Bar**: Bottom tabs now stay mounted and don't re-render when switching tabs
+2. **Smooth Transitions**: Tabs use instant switching (no animation delay) since they're pre-mounted
+3. **Stack Navigation**: Detail screens slide in smoothly from the right (250ms animation)
+4. **Consistent UX**: Tab bar styling matches design inspiration with proper colors and spacing
+5. **Badge Indicator**: Today tab shows a small badge dot when active (matching design)
+
+**Technical Details**:
+- Tab bar height: 85px (matches design inspiration)
+- Tab bar positioned absolutely at bottom
+- All tabs stay mounted (`lazy: false`) for instant switching
+- Stack screens use `slide_from_right` animation for smooth entry
+- Navigation from tabs to stack screens uses `navigation.getParent()?.navigate()`
+
+**Impact**:
+- Much smoother navigation experience
+- Tab bar no longer flickers or re-renders
+- Consistent navigation pattern across all main pages
+- Better performance (tabs pre-mounted)
+- Professional feel matching modern app standards
+
+**Status**: ✅ **Complete** - Navigation restructured with persistent tab bar and smooth transitions. All four main pages now share the same bottom navigation that stays still during tab switching.
+
+---
+
+## AWS S3 Setup Documentation (December 16, 2025, 10:46)
+
+**Date**: December 16, 2025, 10:46  
+**Action**: Enhanced AWS S3 setup documentation with detailed step-by-step instructions
+
+### Summary
+Updated `API_KEYS_REQUIRED.md` with comprehensive AWS setup instructions based on the current AWS IAM console workflow. The documentation now includes detailed steps for:
+1. Creating access keys for the IAM user
+2. Creating and configuring S3 buckets
+3. Setting up CloudFront distributions
+4. Installing required SDK packages
+5. Configuring environment variables
+
+### Changes Made
+- **Enhanced AWS Section**: Expanded the AWS credentials section in `API_KEYS_REQUIRED.md` with:
+  - Step-by-step instructions for creating access keys
+  - Detailed S3 bucket creation and configuration
+  - Bucket policy and CORS configuration examples
+  - CloudFront distribution setup guide
+  - Clear environment variable setup instructions
+
+### Current Status
+- ✅ IAM user `audiofiles` created with `AmazonS3FullAccess` policy
+- ✅ Access key created and added to `.env` file (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+- ✅ AWS SDK packages installed (`@aws-sdk/client-s3@3.952.0`, `@aws-sdk/s3-request-presigner@3.952.0`)
+- ✅ S3 service code enabled (uncommented all S3 functions in `apps/api/src/services/storage/s3.ts`)
+- ✅ S3 bucket created: `ab-v3` in region `us-east-2`
+- ✅ S3 connection tested and verified (all tests passed)
+- ✅ File upload functionality confirmed working
+- ⏳ CloudFront distribution (optional, can be added later)
+
+### Changes Made (December 16, 2025, 10:46+)
+- **Installed AWS SDK**: Added `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` to `apps/api/package.json`
+- **Enabled S3 Service**: Uncommented all S3 functions:
+  - `getS3Client()` - Creates S3 client with credentials
+  - `uploadToS3()` - Uploads files to S3 bucket
+  - `fileExistsInS3()` - Checks if file exists in S3
+  - All imports and implementations are now active
+- **Added Region Detection**: Added `detectBucketRegion()` function to help identify bucket regions
+- **Created Test Script**: `apps/api/test-s3.ts` to verify S3 configuration and connectivity
+
+### Test Results (December 16, 2025)
+All S3 tests passed successfully:
+- ✅ Configuration check (all environment variables set)
+- ✅ S3 client creation
+- ✅ Bucket access verified
+- ✅ File upload test successful
+- ✅ File existence check working
+- ✅ S3 key generation format correct
+
+### Decision Rationale
+The documentation was enhanced to provide clear, actionable steps that match the actual AWS console interface. This will help ensure proper configuration of S3 storage for production audio file hosting, which is required for Phase 6.4 of the production readiness plan. The S3 service is now fully operational and ready for production use. CloudFront can be added later for CDN capabilities, but is not required for basic S3 functionality.
+
+**Status**: ✅ **Fully Configured & Tested** - S3 is ready for production use
+
+---
+
+## S3 Integration into Audio Generation Pipeline (December 16, 2025, 11:00+)
+
+**Date**: December 16, 2025, 11:00+  
+**Action**: Integrated S3 uploads into the audio generation pipeline for production-ready file storage
+
+### Summary
+Successfully integrated AWS S3 uploads into the audio generation workflow. Merged audio files are now automatically uploaded to S3 after generation, and the playback bundle endpoint intelligently uses S3 URLs when available, falling back to local file serving for development.
+
+### Changes Made
+
+#### 1. Audio Generation Pipeline (`apps/api/src/services/audio/generation.ts`)
+- **Added S3 imports**: Imported `uploadToS3`, `generateS3Key`, and `isS3Configured` from S3 service
+- **Upload after stitching**: After merged audio is stitched and measured, it's automatically uploaded to S3 if configured
+- **S3 URL storage**: Database now stores S3 URLs (when available) instead of local file paths
+- **Migration support**: Existing local files are automatically migrated to S3 when accessed (if S3 is configured)
+- **Graceful fallback**: If S3 upload fails, falls back to local file storage (development-friendly)
+
+#### 2. Playback Bundle Endpoint (`apps/api/src/index.ts`)
+- **S3 URL detection**: Checks if URL is already an S3/CloudFront URL (starts with `http://` or `https://`)
+- **Direct S3 serving**: Uses S3 URLs directly when available (no local server needed)
+- **Local fallback**: Constructs local file URLs only when S3 URL is not available
+- **Session endpoint**: Updated `/sessions/:id` endpoint with same S3-aware URL logic
+
+### Implementation Details
+
+**Upload Flow**:
+1. Audio file is stitched locally (as before)
+2. Loudness and voice activity are measured
+3. If S3 is configured, file is uploaded to S3 with key: `audio/affirmationMerged/{hash}.mp3`
+4. S3 URL is stored in database (replaces local path)
+5. Local file remains as backup (can be cleaned up later)
+
+**URL Resolution**:
+- S3 URLs (http/https): Used directly in playback bundle
+- Local paths: Constructed as localhost URLs for development
+- Automatic migration: Old local files are uploaded to S3 on next access
+
+### Benefits
+
+1. **Production Ready**: Files are now stored in cloud, accessible from anywhere
+2. **Mobile App Compatible**: Mobile apps can access S3 URLs directly (no localhost dependency)
+3. **Scalable**: S3 handles file serving, reducing load on API server
+4. **Backward Compatible**: Still works with local files if S3 is not configured
+5. **Automatic Migration**: Existing local files are migrated to S3 automatically
+
+### Testing Status
+- ✅ Code integrated and linted
+- ⏳ End-to-end test needed (generate audio and verify S3 upload)
+
+### Next Steps
+1. Test audio generation with S3 enabled
+2. Verify playback bundle returns S3 URLs
+3. Test mobile app can access S3 URLs
+4. (Optional) Set up CloudFront for CDN optimization
+
+**Status**: ✅ **Integration Complete** - Ready for testing
+
+---
+
+## 2025-01-14 - Audio Playback Fix: Wait for Players to Load
+
+**Time**: ~00:30 (based on terminal logs)
+
+### Problem
+Audio players were being created and `play()` was being called, but they weren't actually playing. The logs showed:
+- Players created successfully
+- `play()` called on each player
+- After 500ms, all players showed `playing: false`
+- Durations were `NaN`, indicating audio files hadn't loaded yet
+
+### Root Cause
+`expo-audio` players need to load the audio file metadata before they can actually play. The code was calling `play()` immediately after creating players, but the audio files hadn't loaded yet, so `play()` didn't start playback.
+
+### Solution
+1. **Created `waitForPlayerReady()` helper method**: Uses `playbackStatusUpdate` listener to wait for `isLoaded` to become true before proceeding
+2. **Updated `waitForPlayersReady()` method**: Now uses the new helper to wait for all three players (affirmations, binaural, background) to be ready
+3. **Updated rolling start sequence in `play()` method**: Now waits for each player to be ready after calling `play()` before moving to the next player
+4. **Updated `crossfadeToMainMix()` method**: Now waits for all main tracks to load before starting the crossfade
+
+### Changes Made
+- `packages/audio-engine/src/AudioEngine.ts`:
+  - Added `waitForPlayerReady()` method that uses `playbackStatusUpdate` listener
+  - Refactored `waitForPlayersReady()` to use the new helper
+  - Updated rolling start sequence to wait for each player to be ready
+  - Updated crossfade logic to wait for players before starting
+
+### Technical Details
+- `expo-audio` players load asynchronously when `play()` is called
+- The `playbackStatusUpdate` event fires when `isLoaded` becomes true
+- We now wait for this event before proceeding with playback
+- Timeout set to 10 seconds per player (configurable)
+
+### Testing Status
+- ✅ Code updated and linted
+- ⏳ Needs testing on device to verify players actually start playing
+
+### Next Steps
+1. Test on physical device to verify audio playback works
+2. Monitor logs to ensure players load within timeout
+3. Consider adding retry logic if initial load fails
+
+**Status**: ✅ **Code Complete** - Ready for device testing
+
+---
+
+## 2025-01-14 - Comprehensive Audio Playback Fixes (Root Causes Identified)
+
+**Time**: ~01:00
+
+### Problem Analysis
+After initial fix attempt, root causes were identified:
+1. **AudioEngine readiness check was wrong**: Checking `duration` instead of `isLoaded`
+2. **API server missing HEAD support**: iOS AVPlayer issues HEAD requests before GET
+3. **Missing audio session configuration**: No silent mode/background playback setup
+4. **iOS ATS blocking HTTP URLs**: App Transport Security blocking local network media
+
+### Root Cause #1: AudioEngine Readiness Logic
+**Issue**: `waitForPlayerReady()` was checking `player.duration !== undefined && !isNaN(player.duration) && player.duration > 0`, but `expo-audio` players can have `duration=NaN` even when loaded, especially with remote/streaming sources.
+
+**Fix**: Changed to check `isLoaded === true` property directly, which is how `expo-audio` actually defines "loaded" state. Also added better error logging with debug info (`isBuffering`, `timeControlStatus`, `reasonForWaitingToPlay`).
+
+### Root Cause #2: API Server HEAD Support
+**Issue**: iOS `AVPlayer` / native media loaders issue HEAD requests first to check headers (`Accept-Ranges`, `Content-Length`, etc.) before fetching bytes. The server only had GET handlers, so HEAD returned 404, causing silent failures.
+
+**Fix**: 
+- Extracted `/storage/*` and `/assets/*` handlers into reusable functions (`serveStorage`, `serveAssets`)
+- Added explicit `app.head()` routes for both paths
+- Modified handlers to detect HEAD requests and return headers without body (status 200 for full file, 206 for range requests)
+
+### Root Cause #3: Audio Session Configuration
+**Issue**: No audio session configuration meant audio might not play in silent mode or could randomly stall.
+
+**Fix**: 
+- Added `ensureAudioSession()` method that configures:
+  - `playsInSilentMode: true`
+  - `shouldPlayInBackground: true`
+  - `interruptionModeAndroid: "duckOthers"`
+  - `interruptionMode: "mixWithOthers"`
+- Called `ensureAudioSession()` at the start of both `load()` and `play()` methods
+- Uses singleton pattern to only configure once
+
+### Root Cause #4: iOS App Transport Security
+**Issue**: iOS ATS blocks HTTP URLs (like `http://192.168...`) in standalone/dev builds, even though Expo Go is permissive.
+
+**Fix**: Added ATS exceptions to `app.json`:
+```json
+"infoPlist": {
+  "NSAppTransportSecurity": {
+    "NSAllowsArbitraryLoads": true,
+    "NSAllowsArbitraryLoadsForMedia": true
+  }
+}
+```
+
+### Changes Made
+1. **packages/audio-engine/src/AudioEngine.ts**:
+   - Updated imports to include `setAudioModeAsync`, `setIsAudioActiveAsync`
+   - Added `ensureAudioSession()` method
+   - Completely rewrote `waitForPlayerReady()` to check `isLoaded` instead of `duration`
+   - Added calls to `ensureAudioSession()` in `load()` and `play()`
+   - Improved error logging with debug state information
+
+2. **apps/api/src/index.ts**:
+   - Extracted `/storage/*` handler into `serveStorage` function
+   - Extracted `/assets/*` handler into `serveAssets` function
+   - Added HEAD request detection (`isHead = c.req.method === "HEAD"`)
+   - Added `app.head()` routes for both `/storage/*` and `/assets/*`
+   - Modified handlers to return headers without body for HEAD requests
+
+3. **apps/mobile/app.json**:
+   - Added iOS `infoPlist` with `NSAppTransportSecurity` exceptions
+
+### Technical Details
+- **isLoaded vs duration**: `expo-audio` defines "loaded" as `isLoaded === true`, not "duration is known". Duration can remain `NaN` for streaming sources.
+- **HEAD requests**: iOS media stack issues HEAD to check `Accept-Ranges`, `Content-Length`, `Content-Type` before downloading. Missing HEAD = silent failure.
+- **Audio session**: Must be configured before playback to ensure proper behavior (silent mode, background, interruptions).
+- **ATS**: Required for local network HTTP URLs in production builds (Expo Go is permissive but dev client/release builds are not).
+
+### Testing Status
+- ✅ Code updated and linted
+- ✅ Package rebuilt successfully
+- ⏳ Needs testing on physical iOS device to verify:
+  - Players load correctly (check for "loaded (event)" or "loaded (poll)" messages)
+  - HEAD requests succeed (check server logs)
+  - Audio plays in silent mode
+  - Audio continues in background
+
+### Expected Logs After Fix
+When tapping Play, you should see:
+- `[AudioEngine] Waiting for Background to load...`
+- `[AudioEngine] ✅ Background loaded (event)` or `[AudioEngine] ✅ Background loaded (poll)`
+- `[AudioEngine] ✅ Binaural loaded (event)`
+- `[AudioEngine] ✅ Affirmations loaded (event)`
+- `playing=true` should follow shortly after
+
+### Next Steps
+1. Test on physical iOS device (Expo Go or dev client)
+2. Monitor server logs for HEAD requests to `/assets/*` and `/storage/*`
+3. Verify audio plays correctly with all three fixes applied
+4. If still failing, check server response headers (`Content-Type`, `Accept-Ranges`, `Content-Length`)
+
+**Status**: ✅ **All Fixes Complete** - Ready for device testing
+
+---
+
+## December 16, 2025 - Audio Loading Debug Session (Continued)
+
+### Symptom
+All three audio players (Background, Binaural, Affirmations) remain stuck in buffering state:
+- `isBuffering: true`
+- `isLoaded: false`
+- `duration: NaN`
+- `playing: false`
+
+This affects both HTTP URLs (local server) AND HTTPS URLs (S3), indicating the issue is NOT just App Transport Security.
+
+### Debug Changes Made
+
+#### 1. Enhanced Audio Session Logging
+Added detailed logging to `ensureAudioSession()` to track:
+- When `setIsAudioActiveAsync(true)` is called and completes
+- When `setAudioModeAsync()` is called and completes
+- Any errors during audio session configuration
+
+#### 2. URL Reachability Test
+Added a diagnostic fetch test before creating players:
+- Tests each URL with HEAD request
+- Logs status code, Content-Type, and Content-Length
+- Helps identify if the issue is network connectivity vs expo-audio
+
+### Key Observations
+1. **All URLs fail** - Even the S3 HTTPS URL fails, ruling out ATS as the sole cause
+2. **Expo Go limitation** - Custom `infoPlist` settings (NSAllowsArbitraryLoads) are NOT applied in Expo Go
+3. **Audio session may be silently failing** - The catch block was swallowing errors
+
+### Possible Root Causes Being Investigated
+1. **Network connectivity** - Device might not be able to reach the local server IP
+2. **Audio session not configured properly** - expo-audio might require specific session setup
+3. **expo-audio bug** - There may be an issue with the expo-audio library itself
+4. **Expo Go sandbox restrictions** - Expo Go may have additional restrictions not present in dev client
+
+### Root Causes Identified
+
+#### Issue 1: S3 Files Return 403 Forbidden
+The S3 bucket had "Block Public Access" enabled, preventing objects from being publicly readable.
+
+**Solution**: Created bucket policy to allow public read access to `audio/*`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PublicReadAudio",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::ab-v3/audio/*"
+  }]
+}
+```
+
+Script: `apps/api/scripts/fix-s3-bucket-policy.ts`
+
+#### Issue 2: iOS App Transport Security Blocks HTTP URLs
+Even though JavaScript `fetch()` works in Expo Go, the native AVPlayer (used by expo-audio) is blocked by iOS ATS for HTTP URLs. This is because:
+- Expo Go's JavaScript runtime has relaxed ATS settings
+- But the native audio player follows strict iOS ATS rules
+- Custom `infoPlist` settings in `app.json` don't apply to Expo Go
+
+**Solution**: 
+1. Uploaded binaural and background assets to S3
+2. Modified `assets.ts` to return S3 HTTPS URLs for iOS, local HTTP URLs for Android
+
+Script: `apps/api/scripts/upload-static-assets-to-s3.ts`
+
+### Changes Made
+1. **apps/api/scripts/fix-s3-bucket-policy.ts** - Creates S3 bucket policy for public audio access
+2. **apps/api/scripts/upload-static-assets-to-s3.ts** - Uploads static audio assets to S3
+3. **apps/api/src/services/audio/assets.ts** - Returns platform-specific URLs:
+   - iOS: S3 HTTPS URLs (avoids ATS issues)
+   - Android: Local HTTP URLs (no ATS restrictions)
+
+### S3 URLs
+- Binaural: `https://ab-v3.s3.us-east-2.amazonaws.com/audio/binaural/alpha_10hz_400_3min.m4a`
+- Background: `https://ab-v3.s3.us-east-2.amazonaws.com/audio/background/Babbling%20Brook.m4a`
+- Affirmations: `https://ab-v3.s3.us-east-2.amazonaws.com/audio/affirmationMerged/<hash>.m4a`
+
+**Status**: ✅ **Fixes Applied** - Ready for testing. Reload the app and try playing a session.
+
+---
+
+## 2025-12-16 21:02:01 - Session Art Placeholder Images
+
+### Overview
+Added placeholder images for session art to replace gradient backgrounds in album covers and player backgrounds. This provides a more visually appealing and personalized experience for each session.
+
+### Changes Made
+
+1. **Created Session Art Utility** (`apps/mobile/src/lib/sessionArt.ts`):
+   - Utility function to get consistent placeholder images based on session ID
+   - Uses hash function to deterministically assign images to sessions
+   - Includes 13 placeholder images from `apps/assets/images/`
+   - All images are properly required and exported
+
+2. **Updated SessionTile Component** (`apps/mobile/src/components/SessionTile.tsx`):
+   - Replaced `LinearGradient` background with `Image` component using placeholder images
+   - Added gradient overlay for better text/icon visibility
+   - Maintains existing play button overlay and bookmark functionality
+   - Images are consistently assigned based on session ID
+
+3. **Updated MiniPlayer Component** (`apps/mobile/src/components/MiniPlayer.tsx`):
+   - Replaced `LinearGradient` with `Image` component for album cover
+   - Uses same placeholder image system for consistency
+   - Maintains existing player controls and visualizer
+
+4. **Updated PlayerScreen** (`apps/mobile/src/screens/PlayerScreen.tsx`):
+   - Added blurred background image using session art placeholder
+   - Applied blur effect (blurRadius: 20) for aesthetic appeal
+   - Added dark overlay (rgba(15, 23, 42, 0.75)) for content readability
+   - Disabled gradient background on AppScreen to show blurred image
+
+### Image Assets
+All placeholder images are located in `apps/assets/images/`:
+- 1.jpg
+- 1_Untitled design.jpg through 7_Untitled design.jpg
+- Untitled design.jpg and Untitled design (1-5).jpg
+
+### Design Decisions
+- **Consistent Image Assignment**: Hash function ensures the same session always gets the same image
+- **Blurred Background**: Player screen uses blurred version of session art for immersive experience
+- **Overlay for Readability**: Dark overlay on player background ensures text remains readable
+- **Gradient Overlay on Tiles**: Subtle gradient overlay on SessionTile images improves icon/text visibility
+
+**Status**: ✅ **Complete** - All placeholder images integrated. Ready for testing.
+
+---
+
+## 2025-12-16 21:10:00 - Session Art Fixes
+
+### Overview
+Fixed three issues with session art implementation:
+1. Blur intensity too heavy on player background
+2. Grey bar appearing at bottom of player screen
+3. Verified album art is correctly implemented (should work across all screens using SessionTile)
+
+### Changes Made
+
+1. **Reduced Blur Intensity** (`apps/mobile/src/screens/PlayerScreen.tsx`):
+   - Reduced `blurRadius` from 20 to 10 for subtler blur effect
+   - Reduced background overlay opacity from 0.75 to 0.65 for better image visibility
+   - Improved visual balance between blurred image and content readability
+
+2. **Fixed Grey Bar at Bottom** (`apps/mobile/src/screens/PlayerScreen.tsx`):
+   - Wrapped PlayerScreen content in outer View container to ensure background image fills entire screen
+   - Background image and overlay now render outside SafeAreaView boundaries
+   - Added `screenContainer` style with proper background color
+   - Fixed closing tag structure to properly wrap AppScreen component
+
+3. **Album Art Implementation**:
+   - Verified SessionTile component correctly uses `getSessionArtImage()` utility
+   - LibraryScreen uses SessionTile with sessionId prop correctly
+   - Image path resolution confirmed: `../../../assets/images/` from `apps/mobile/src/lib/sessionArt.ts`
+   - Metro config watches workspace root, so images should be bundled correctly
+   - All 13 placeholder images are properly required in sessionArt.ts
+
+### Technical Details
+- PlayerScreen now has proper container hierarchy: outer View → Image/Overlay → AppScreen → Content
+- Background image extends to fill entire screen, eliminating grey bar from SafeAreaView gaps
+- Blur radius of 10 provides subtle depth without obscuring image content
+- Overlay opacity of 0.65 maintains content readability while showing more of the blurred image
+
+**Status**: ✅ **Fixed** - Blur intensity reduced, grey bar eliminated. Album art should display correctly in all screens using SessionTile component.
+
+---
+
+## 2025-12-17 11:20:42 - Bespoke Typography System Implementation
+
+### Overview
+Completely redesigned typography system to move from "nice default" to "intentional instrument". Created a refined, restrained typography system with 8 distinct text styles that elevates the perceived craftsmanship of the app.
+
+### Typography Philosophy
+The new system follows these core principles:
+- **One signature moment**: Affirmation titles get special treatment (larger, semibold, tight tracking)
+- **Reduced complexity**: Consolidated from many similar styles to 8 intentional roles
+- **Micro-typography matters**: Letter spacing and line height tuned for calm and clarity
+- **Weight discipline**: Only Regular (400), Medium (500), and Semibold (600) - no bold, no light
+- **Line height > font size**: Generous breathing room creates calm
+
+### Typography System (8 Styles)
+
+1. **Affirmation Title** (SIGNATURE MOMENT)
+   - 28px, Semibold (600), line-height 34, letter-spacing -0.3
+   - Used ONLY for affirmation titles, main session titles, player screen title
+   - This is the emotional anchor - used sparingly and intentionally
+
+2. **Section Headings**
+   - 20px, Medium (500), line-height 26, letter-spacing -0.2
+   - "What do you need to hear today?", "Why this works", screen titles
+   - Structural, not emotional
+
+3. **Card Titles / Program Titles**
+   - 17px, Medium (500), line-height 22, letter-spacing -0.1
+   - Program cards, session cards in Explore, library item titles
+
+4. **Body Copy** (Primary Reading)
+   - 15px, Regular (400), line-height 22, letter-spacing 0
+   - Descriptions, explanations, program content
+   - Generous line height reduces cognitive load
+
+5. **Metadata / Supporting Text**
+   - 13px, Regular (400), line-height 18, letter-spacing 0.1
+   - "Alpha 10Hz · 30 min", "Recommended: Morning · Evening", categories
+   - Slightly increased tracking improves clarity at small sizes
+
+6. **Labels / Pills / Tags**
+   - 12px, Medium (500), line-height 16, letter-spacing 0.6
+   - Category pills, filters, tags
+   - Wider tracking makes them feel deliberate (no all-caps)
+
+7. **Buttons**
+   - 15px, Medium (500), line-height 20, letter-spacing 0.4
+   - All primary and secondary buttons
+   - Let button shape do the work, not the text
+
+8. **Caption / Footnote**
+   - 12px, Regular (400), line-height 18, letter-spacing 0.2
+   - Small explanatory blurbs, educational notes
+   - Reassuring, not academic
+
+### Changes Made
+
+1. **Theme Tokens Updated** (`apps/mobile/src/theme/tokens.ts`):
+   - Replaced generic h1/h2/h3/body/caption with 8 specific styles
+   - Added detailed comments explaining each style's purpose
+   - Kept legacy styles for backward compatibility during migration
+
+2. **PlayerScreen** (`apps/mobile/src/screens/PlayerScreen.tsx`):
+   - Session title now uses `affirmationTitle` style (signature moment)
+   - Subtitle uses `metadata` style
+   - Makes the player screen the emotional anchor
+
+3. **HomeScreen** (`apps/mobile/src/screens/HomeScreen.tsx`):
+   - Hero question "What do you need to hear today?" uses `sectionHeading` style
+   - Affirmation quote uses `affirmationTitle` style (signature moment)
+   - Hero card title uses `cardTitle` style
+   - Metadata uses `metadata` style
+
+4. **SessionDetailScreen** (`apps/mobile/src/screens/SessionDetailScreen.tsx`):
+   - Session title uses `affirmationTitle` style
+
+5. **SectionHeader Component** (`apps/mobile/src/components/SectionHeader.tsx`):
+   - Uses `sectionHeading` style for titles
+   - Action labels use `metadata` style
+
+6. **PrimaryButton Component** (`apps/mobile/src/components/PrimaryButton.tsx`):
+   - Uses `button` style with proper letter spacing
+   - Removed size-based fontSize overrides (accessibility maintained via height)
+
+7. **Chip Component** (`apps/mobile/src/components/Chip.tsx`):
+   - Uses `label` style with proper letter spacing (0.6)
+   - Consistent across all variants
+
+8. **SessionTile Component** (`apps/mobile/src/components/SessionTile.tsx`):
+   - Uses `cardTitle` style for session titles
+
+### Design Decisions
+
+- **Affirmation titles are sacred**: They're the only place we use Semibold (600), creating a clear hierarchy
+- **No all-caps**: Removed text transforms - let spacing and weight create emphasis
+- **Calm through spacing**: Line heights always exceed font sizes
+- **Intentional restraint**: If everything is loud, nothing is
+
+### Next Steps (Future Enhancements)
+
+- Consider custom font family (Neue Haas Grotesk / Helvetica Now recommended)
+- Custom icon system (thin-outline, soft, restrained)
+- 6-8 custom icons for emotional anchors (play/pause, wave, bookmark)
+
+**Status**: ✅ **Complete** - Typography system fully implemented. App now has intentional, bespoke typography that elevates perceived craftsmanship.
+
+---
+
+## 2025-12-17 11:36:41 - Inter Font Implementation
+
+### Overview
+Implemented Inter font family as the primary typeface for the app. Inter is a neutral, confident, adult font that doesn't compete with affirmations - perfect for creating an intentional, bespoke typography system.
+
+### Changes Made
+
+1. **Added Inter Font Package** (`apps/mobile/package.json`):
+   - Added `@expo-google-fonts/inter` dependency
+   - Provides Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold
+
+2. **Updated Theme Tokens** (`apps/mobile/src/theme/tokens.ts`):
+   - Changed fontFamily from "System" to Inter font variants
+   - Inter_400Regular for Regular (400) weight
+   - Inter_500Medium for Medium (500) weight
+   - Inter_600SemiBold for Semibold (600) weight
+   - Inter_700Bold for Bold (700) weight
+   - All 8 typography styles now use Inter fontFamily
+   - Added fallback to "System" for when fonts haven't loaded
+
+3. **Font Loading** (`apps/mobile/src/App.tsx`):
+   - Added `useFonts` hook from expo-font
+   - Loading all 4 Inter font weights on app startup
+   - App waits for fonts to load before rendering (prevents flash of unstyled text)
+   - Fonts load asynchronously with graceful fallback
+
+### Technical Implementation
+
+- Font family names match Expo Google Fonts naming convention: `Inter_400Regular`, `Inter_500Medium`, etc.
+- All typography styles now include `fontFamily` property
+- Font loading is handled at app root level for optimal performance
+- System font fallback ensures app works even if font loading fails
+
+### Font Weights Used
+
+- **Regular (400)**: Body copy, metadata, captions
+- **Medium (500)**: Section headings, card titles, labels, buttons
+- **Semibold (600)**: Affirmation titles (signature moment only)
+- **Bold (700)**: Reserved for future use if needed
+
+### Next Steps
+
+- Run `npm install` in apps/mobile to install the font package
+- Test font loading and rendering across all screens
+- Verify font fallback behavior if fonts fail to load
+- Consider font preloading for improved performance
+
+**Status**: ✅ **Complete** - Inter font integrated. All typography styles now use Inter font family. Package needs to be installed with `npm install` before fonts will load.

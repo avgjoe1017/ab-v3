@@ -17,7 +17,7 @@ export async function getJob(id: string): Promise<Job | null> {
 
 export async function updateJobStatus(
     id: string,
-    status: "processing" | "completed" | "failed",
+    status: "pending" | "processing" | "completed" | "failed",
     result?: any,
     error?: string
 ) {

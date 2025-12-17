@@ -1,18 +1,20 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { useDraftStore } from "../state/useDraftStore";
 import { useEntitlement } from "../hooks/useEntitlement";
+import { useAuthToken } from "../lib/auth";
 import { getAudioEngine } from "@ab/audio-engine";
-import { AppScreen, PrimaryButton, SessionTile, SectionHeader, BottomTabs, MiniPlayer, IconButton, Chip, Card, ScienceCard } from "../components";
+import { AppScreen, PrimaryButton, SessionTile, SectionHeader, MiniPlayer, IconButton, Chip, Card, ScienceCard } from "../components";
 import { theme } from "../theme";
-import type { TabRoute } from "../components";
 import { useActiveProgram } from "../hooks";
 import { useOnboardingPreferences } from "../hooks/useOnboardingPreferences";
 import { getRandomScienceCard } from "../lib/science";
+import type { SessionV3 } from "@ab/contracts";
+import { getRecentSessions } from "../storage/recentSessions";
 
 type SessionRow = { id: string; title: string; goalTag?: string };
 
@@ -28,11 +30,13 @@ export default function HomeScreen({ navigation }: any) {
     refreshEntitlement();
   }, [refreshEntitlement]);
 
+  const authToken = useAuthToken();
+  
   const { data: sessions, isLoading, error } = useQuery({
-    queryKey: ["sessions"],
+    queryKey: ["sessions", authToken],
     queryFn: async () => {
       try {
-        const res = await apiGet<{ sessions: SessionRow[] }>("/sessions");
+        const res = await apiGet<{ sessions: SessionRow[] }>("/sessions", authToken);
         return res.sessions;
       } catch (err) {
         console.error("[HomeScreen] Error fetching sessions:", err);
@@ -46,7 +50,7 @@ export default function HomeScreen({ navigation }: any) {
   const { data: onboardingPrefs } = useOnboardingPreferences();
 
   const handleSessionPress = (sessionId: string) => {
-    navigation.navigate("SessionDetail", { sessionId });
+    navigation.getParent()?.navigate("SessionDetail", { sessionId });
   };
 
   // Filter sessions based on onboarding goal preference, or fallback to beginner sessions
@@ -84,42 +88,133 @@ export default function HomeScreen({ navigation }: any) {
   const currentSessionId = snapshot.sessionId;
   const { data: activeProgram } = useActiveProgram();
 
-  // Get a random science card for "Did you know?" section
-  const scienceCard = useMemo(() => getRandomScienceCard(), []);
+  // Fetch recent sessions for Continue Practice
+  const { data: recentSessions } = useQuery({
+    queryKey: ["recent-sessions"],
+    queryFn: getRecentSessions,
+  });
 
-  const handleBeginPress = () => {
-    if (!sessions || sessions.length === 0) {
-      console.warn("[HomeScreen] No sessions loaded yet");
-      return;
-    }
-    
-    // Use first available session as default
-    const firstSession = sessions[0];
-    if (firstSession) {
-      handleSessionPress(firstSession.id);
+  // Get most recent session for Continue Practice
+  const continueSession = useMemo(() => {
+    if (!recentSessions || recentSessions.length === 0) return null;
+    return recentSessions[0]; // Most recent is first
+  }, [recentSessions]);
+
+  // Fetch continue session details
+  const { data: continueSessionDetails } = useQuery({
+    queryKey: ["continue-session", continueSession?.sessionId],
+    queryFn: async () => {
+      if (!continueSession) return null;
+      try {
+        const res = await apiGet<SessionV3>(`/sessions/${continueSession.sessionId}`, authToken);
+        return res;
+      } catch (err) {
+        console.error("[HomeScreen] Error fetching continue session:", err);
+        return null;
+      }
+    },
+    enabled: !!continueSession,
+  });
+
+  // Calculate progress for continue session
+  const continueProgress = useMemo(() => {
+    if (!continueSession || !continueSessionDetails) return null;
+    // Estimate duration (default 30 minutes if not available)
+    const estimatedDurationMs = 30 * 60 * 1000; // 30 minutes
+    const playedFor = continueSession.playedFor || 0;
+    const progress = Math.min(playedFor / estimatedDurationMs, 1);
+    const remainingMs = Math.max(estimatedDurationMs - playedFor, 0);
+    const remainingMinutes = Math.round(remainingMs / (60 * 1000));
+    return { progress, remainingMinutes };
+  }, [continueSession, continueSessionDetails]);
+
+  const handleContinuePress = () => {
+    if (continueSession) {
+      handleSessionPress(continueSession.sessionId);
     }
   };
 
-  const handleNavigate = (route: TabRoute) => {
-    switch (route) {
-      case "Today":
-        // Already on Today
-        break;
-      case "Explore":
-        navigation.navigate("Explore");
-        break;
-      case "Programs":
-        navigation.navigate("ProgramsList");
-        break;
-      case "Library":
-        navigation.navigate("Library");
-        break;
+  // Get a random science card for "Did you know?" section
+  const scienceCard = useMemo(() => getRandomScienceCard(), []);
+
+  // Find hero session (prefer sleep-related, fallback to first session)
+  const heroSession = useMemo(() => {
+    if (!sessions || sessions.length === 0) return null;
+    // Try to find a sleep-related session
+    const sleepSession = sessions.find(s => 
+      s.goalTag === "sleep" || 
+      s.title.toLowerCase().includes("sleep") ||
+      s.title.toLowerCase().includes("wind down")
+    );
+    return sleepSession || sessions[0];
+  }, [sessions]);
+
+  // Fetch hero session details with affirmations
+  const { data: heroSessionDetails } = useQuery({
+    queryKey: ["hero-session", heroSession?.id, authToken],
+    queryFn: async () => {
+      if (!heroSession) return null;
+      try {
+        const res = await apiGet<SessionV3>(`/sessions/${heroSession.id}`, authToken);
+        return res;
+      } catch (err) {
+        console.error("[HomeScreen] Error fetching hero session:", err);
+        return null;
+      }
+    },
+    enabled: !!heroSession,
+  });
+
+  // State for current displayed affirmation
+  const [currentAffirmation, setCurrentAffirmation] = useState<string | null>(null);
+
+  // Initialize affirmation when session details are loaded
+  useEffect(() => {
+    if (heroSessionDetails && heroSessionDetails.affirmations.length > 0) {
+      // Pick a random affirmation on initial load
+      const randomIndex = Math.floor(Math.random() * heroSessionDetails.affirmations.length);
+      const affirmation = heroSessionDetails.affirmations[randomIndex];
+      if (affirmation) {
+        setCurrentAffirmation(affirmation);
+      }
     }
+  }, [heroSessionDetails]);
+
+  const handleDifferentAffirmation = () => {
+    if (!heroSessionDetails || heroSessionDetails.affirmations.length === 0) return;
+    
+    // Pick a different random affirmation
+    const availableAffirmations = heroSessionDetails.affirmations.filter(
+      a => a !== currentAffirmation
+    );
+    
+    if (availableAffirmations.length > 0) {
+      const randomIndex = Math.floor(Math.random() * availableAffirmations.length);
+      const affirmation = availableAffirmations[randomIndex];
+      if (affirmation) {
+        setCurrentAffirmation(affirmation);
+      }
+    } else {
+      // If only one affirmation, just use it
+      const affirmation = heroSessionDetails.affirmations[0];
+      if (affirmation) {
+        setCurrentAffirmation(affirmation);
+      }
+    }
+  };
+
+  const handleBeginPress = () => {
+    if (!heroSession) {
+      console.warn("[HomeScreen] No hero session available");
+      return;
+    }
+    handleSessionPress(heroSession.id);
   };
 
   const handleMiniPlayerPress = () => {
     if (currentSessionId) {
-      navigation.navigate("Player", { sessionId: currentSessionId });
+      // Navigate to Player screen in the stack
+      navigation.getParent()?.navigate("Player", { sessionId: currentSessionId });
     }
   };
 
@@ -142,7 +237,7 @@ export default function HomeScreen({ navigation }: any) {
             </View>
             <IconButton
               icon="account-circle"
-              onPress={() => navigation.navigate("Settings")}
+              onPress={() => navigation.getParent()?.navigate("Settings")}
               variant="filled"
             />
           </View>
@@ -153,7 +248,7 @@ export default function HomeScreen({ navigation }: any) {
           <View style={styles.programPromptContainer}>
             <Card
               variant="elevated"
-              onPress={() => navigation.navigate("ProgramDetail", { programId: activeProgram.program.id })}
+              onPress={() => navigation.getParent()?.navigate("ProgramDetail", { programId: activeProgram.program.id })}
               style={styles.programPromptCard}
             >
               <View style={styles.programPromptContent}>
@@ -174,7 +269,7 @@ export default function HomeScreen({ navigation }: any) {
         <View style={styles.sosContainer}>
           <Card
             variant="default"
-            onPress={() => navigation.navigate("SOS")}
+            onPress={() => navigation.getParent()?.navigate("SOS")}
             style={styles.sosCard}
           >
             <View style={styles.sosContent}>
@@ -211,15 +306,29 @@ export default function HomeScreen({ navigation }: any) {
                 />
               </View>
               <View style={styles.heroCardInfo}>
-                <Text style={styles.heroCardTitle}>Wind Down for Sleep</Text>
+                <Text style={styles.heroCardTitle}>
+                  {heroSessionDetails?.title || heroSession?.title || "Wind Down for Sleep"}
+                </Text>
                 <View style={styles.heroCardMeta}>
                   <MaterialIcons name="waves" size={18} color={theme.colors.text.tertiary} />
-                  <Text style={styles.heroCardMetaText}>Deep Rest · Delta 2Hz · 30 min</Text>
+                  <Text style={styles.heroCardMetaText}>
+                    {heroSessionDetails?.brainwaveState 
+                      ? `${heroSessionDetails.brainwaveState} ${heroSessionDetails.frequencyHz || ''}Hz`
+                      : heroSessionDetails?.goalTag 
+                        ? heroSessionDetails.goalTag
+                        : "Deep Rest"}
+                    {heroSessionDetails?.frequencyHz ? ` · ${heroSessionDetails.frequencyHz}Hz` : ""}
+                    {" · 30 min"}
+                  </Text>
                 </View>
               </View>
               <View style={styles.heroCardQuote}>
                 <Text style={styles.heroCardQuoteText}>
-                  "I release what I cannot control. My mind is quiet. My body is safe."
+                  {currentAffirmation 
+                    ? `"${currentAffirmation}"`
+                    : heroSessionDetails?.affirmations?.[0]
+                      ? `"${heroSessionDetails.affirmations[0]}"`
+                      : '"I release what I cannot control. My mind is quiet. My body is safe."'}
                 </Text>
               </View>
               <View style={styles.heroCardActions}>
@@ -232,10 +341,14 @@ export default function HomeScreen({ navigation }: any) {
                   size="md"
                   style={styles.beginButton}
                 />
-                <View style={styles.differentButton}>
+                <Pressable 
+                  style={styles.differentButton}
+                  onPress={handleDifferentAffirmation}
+                  disabled={!heroSessionDetails || !currentAffirmation}
+                >
                   <MaterialIcons name="cached" size={18} color={theme.colors.text.tertiary} />
                   <Text style={styles.differentButtonText}>Hear a different affirmation</Text>
-                </View>
+                </Pressable>
               </View>
             </View>
           </LinearGradient>
@@ -282,10 +395,57 @@ export default function HomeScreen({ navigation }: any) {
         </View>
 
         {/* Continue Practice */}
-        <View style={styles.section}>
-          <SectionHeader title="Continue Practice" />
-          {/* TODO: Implement continue practice card */}
-        </View>
+        {continueSession && continueSessionDetails && continueProgress && (
+          <View style={styles.section}>
+            <SectionHeader title="Continue Practice" />
+            <View style={styles.continueCardContainer}>
+              <Card
+                variant="default"
+                onPress={handleContinuePress}
+                style={styles.continueCard}
+              >
+                <View style={styles.continueContent}>
+                  <View style={styles.continueImageContainer}>
+                    <LinearGradient
+                      colors={theme.colors.gradients.accent}
+                      style={styles.continueImage}
+                    >
+                      <View style={styles.continueImageOverlay}>
+                        <MaterialIcons name="play-circle" size={24} color={theme.colors.text.primary} />
+                      </View>
+                    </LinearGradient>
+                  </View>
+                  <View style={styles.continueInfo}>
+                    <View style={styles.continueHeader}>
+                      <Text style={styles.continueTitle} numberOfLines={1}>
+                        {continueSessionDetails.title}
+                      </Text>
+                      {continueProgress.remainingMinutes > 0 && (
+                        <Text style={styles.continueTimeLeft}>
+                          {continueProgress.remainingMinutes}m left
+                        </Text>
+                      )}
+                    </View>
+                    <View style={styles.continueProgressBar}>
+                      <View 
+                        style={[
+                          styles.continueProgressFill,
+                          { width: `${continueProgress.progress * 100}%` }
+                        ]} 
+                      />
+                    </View>
+                  </View>
+                  <Pressable
+                    style={styles.continuePlayButton}
+                    onPress={handleContinuePress}
+                  >
+                    <MaterialIcons name="play-arrow" size={24} color={theme.colors.text.primary} />
+                  </Pressable>
+                </View>
+              </Card>
+            </View>
+          </View>
+        )}
 
         <View style={{ height: 160 }} />
       </ScrollView>
@@ -294,13 +454,6 @@ export default function HomeScreen({ navigation }: any) {
       <MiniPlayer
         sessionId={currentSessionId}
         onPress={handleMiniPlayerPress}
-      />
-
-      {/* Bottom Navigation */}
-      <BottomTabs
-        activeRoute="Today"
-        onNavigate={handleNavigate}
-        showBadge={true}
       />
     </AppScreen>
   );
@@ -311,7 +464,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 160,
+    paddingBottom: 100, // Reduced since tab bar is now persistent and handled by navigator
   },
   header: {
     flexDirection: "row",
@@ -360,10 +513,12 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing[6],
   },
   heroQuestion: {
-    ...theme.typography.styles.h1,
-    fontSize: theme.typography.fontSize["3xl"],
+    ...theme.typography.styles.sectionHeading,
     textAlign: "center",
     opacity: 0.9,
+    fontStyle: "italic",
+    // TODO: Use Lora serif font when custom fonts are implemented
+    // Design inspiration uses Lora italic for this text
   },
   heroCardContainer: {
     paddingHorizontal: theme.spacing[4],
@@ -394,9 +549,7 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing[6],
   },
   heroCardTitle: {
-    ...theme.typography.styles.h1,
-    fontSize: theme.typography.fontSize["4xl"],
-    color: theme.colors.text.primary,
+    ...theme.typography.styles.cardTitle,
   },
   heroCardMeta: {
     flexDirection: "row",
@@ -404,16 +557,14 @@ const styles = StyleSheet.create({
     gap: theme.spacing[2],
   },
   heroCardMetaText: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
+    ...theme.typography.styles.metadata,
   },
   heroCardQuote: {
     marginBottom: theme.spacing[8],
     paddingLeft: 0,
   },
   heroCardQuoteText: {
-    ...theme.typography.styles.h3,
-    fontSize: theme.typography.fontSize.xl,
+    ...theme.typography.styles.affirmationTitle,
     fontStyle: "italic",
     color: theme.colors.text.secondary,
     textAlign: "center",
@@ -432,6 +583,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[1],
+    opacity: 1,
   },
   differentButtonText: {
     ...theme.typography.styles.body,
@@ -519,5 +671,83 @@ const styles = StyleSheet.create({
   },
   scienceCardContainer: {
     paddingHorizontal: theme.spacing[6],
+  },
+  continueCardContainer: {
+    paddingHorizontal: theme.spacing[6],
+  },
+  continueCard: {
+    padding: theme.spacing[4],
+  },
+  continueContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[4],
+  },
+  continueImageContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: theme.radius.full,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+  },
+  continueImage: {
+    width: "100%",
+    height: "100%",
+  },
+  continueImageOverlay: {
+    position: "absolute",
+    inset: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+  },
+  continueInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
+  },
+  continueHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: theme.spacing[1],
+  },
+  continueTitle: {
+    ...theme.typography.styles.body,
+    fontSize: theme.typography.fontSize.md,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.text.primary,
+    flex: 1,
+  },
+  continueTimeLeft: {
+    ...theme.typography.styles.caption,
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.text.tertiary,
+    marginLeft: theme.spacing[2],
+  },
+  continueProgressBar: {
+    width: "100%",
+    height: 6,
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    borderRadius: theme.radius.full,
+    overflow: "hidden",
+  },
+  continueProgressFill: {
+    height: "100%",
+    backgroundColor: theme.colors.accent.primary,
+    borderRadius: theme.radius.full,
+  },
+  continuePlayButton: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.background.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
   },
 });

@@ -7,7 +7,8 @@ export type ApiErrorCode =
   | "SESSION_TOO_LONG"
   | "AUDIO_NOT_READY"
   | "ASSET_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "UNAUTHORIZED"; // Phase 6.1: Authentication errors
 
 export type ApiError = {
   code: ApiErrorCode;

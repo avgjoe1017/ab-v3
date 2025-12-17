@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, P
 import { theme } from "../theme";
 import { useSleepTimer } from "../hooks/useSleepTimer";
 import { saveMixPreset } from "../storage/mixPresets";
+import { getSessionArtImage } from "../lib/sessionArt";
 
 // Helper to format time in MM:SS
 function formatTime(ms: number): string {
@@ -178,6 +179,9 @@ export default function PlayerScreen({ route, navigation }: any) {
     ? `${frequencyHz}Hz`
     : null;
   
+  // Get placeholder image for blurred background
+  const sessionArtImage = getSessionArtImage(sessionId);
+  
   const isPlaying = status === "playing";
   const isPreroll = status === "preroll";
   const isPaused = status === "paused";
@@ -224,7 +228,17 @@ export default function PlayerScreen({ route, navigation }: any) {
   };
 
   return (
-    <AppScreen>
+    <View style={styles.screenContainer}>
+      {/* Blurred background image - outside SafeAreaView to fill entire screen */}
+      <Image
+        source={sessionArtImage}
+        style={styles.backgroundImage}
+        blurRadius={10}
+        resizeMode="cover"
+      />
+      {/* Dark overlay for better content visibility */}
+      <View style={styles.backgroundOverlay} />
+      <AppScreen gradient={false} style={styles.appScreenOverlay}>
       <View style={styles.content}>
         {/* Top Navigation */}
         <View style={styles.topNav}>
@@ -473,17 +487,39 @@ export default function PlayerScreen({ route, navigation }: any) {
           onSkip={() => setPrimerVisible(false)}
         />
       )}
-    </AppScreen>
+      </AppScreen>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.background.primary,
+  },
+  appScreenOverlay: {
+    backgroundColor: "transparent",
+  },
+  backgroundImage: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
+  },
+  backgroundOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15, 23, 42, 0.65)", // Dark overlay for content readability
+  },
   content: {
     flex: 1,
     padding: theme.spacing[6],
     paddingTop: theme.spacing[12],
     paddingBottom: theme.spacing[8],
     justifyContent: "space-between",
+    zIndex: 1,
   },
   topNav: {
     flexDirection: "row",
@@ -527,15 +563,11 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing[6],
   },
   sessionTitle: {
-    ...theme.typography.styles.h1,
-    fontSize: theme.typography.fontSize["3xl"],
-    color: theme.colors.text.primary,
+    ...theme.typography.styles.affirmationTitle,
     marginBottom: theme.spacing[1],
   },
   sessionSubtitle: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
-    opacity: 0.8,
+    ...theme.typography.styles.metadata,
   },
   audioVizContainer: {
     flexDirection: "row",

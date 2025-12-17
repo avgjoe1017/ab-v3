@@ -62,10 +62,26 @@ Then:
 
 See `QUICK_START_TESTING.md` for detailed testing instructions.
 
+## API Keys Required
+
+**Quick Reference**: See `API_KEYS_SUMMARY.md` for a quick list of required API keys.
+
+**Minimum for Development**:
+- `OPENAI_API_KEY` - For affirmation generation (required)
+- `ELEVENLABS_API_KEY` - For TTS (optional, has fallback)
+
+**For Production**: See `API_KEYS_REQUIRED.md` for complete setup instructions.
+
 ## Environment
 Copy `.env.example` files as needed:
 - `apps/api/.env.example` -> `apps/api/.env`
 - `apps/mobile/.env.example` -> `apps/mobile/.env` (optional)
+
+**Required Environment Variables** (add to `apps/api/.env`):
+```bash
+OPENAI_API_KEY=sk-...  # Required for affirmation generation
+ELEVENLABS_API_KEY=...  # Optional, falls back to beep TTS
+```
 
 ## V3 Architecture Spec
 See `docs/V3_ARCHITECTURE.md`.

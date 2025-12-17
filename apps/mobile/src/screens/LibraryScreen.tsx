@@ -68,7 +68,7 @@ export default function LibraryScreen({ navigation }: any) {
   };
 
   const handleSessionPress = (sessionId: string) => {
-    navigation.navigate("SessionDetail", { sessionId });
+    navigation.getParent()?.navigate("SessionDetail", { sessionId });
   };
 
   const handleToggleSaved = async (sessionId: string) => {
@@ -92,7 +92,7 @@ export default function LibraryScreen({ navigation }: any) {
     // Navigate to player if there's a current session
     const snapshot = engine.getState();
     if (snapshot.sessionId) {
-      navigation.navigate("Player", { sessionId: snapshot.sessionId });
+      navigation.getParent()?.navigate("Player", { sessionId: snapshot.sessionId });
     }
   };
 
@@ -105,16 +105,10 @@ export default function LibraryScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <IconButton
-            icon="arrow-back"
-            onPress={() => navigation.goBack()}
-            variant="filled"
-          />
           <View style={styles.headerCenter}>
             <Text style={styles.headerTitle}>Library</Text>
             <Text style={styles.headerSubtitle}>Your saved content and presets</Text>
           </View>
-          <View style={styles.headerSpacer} />
         </View>
 
         {/* Tabs */}

@@ -15,8 +15,15 @@ import { getFrequencyForGoalTag } from "./services/session-frequency";
 import { prisma } from "./lib/db";
 import { getUserId } from "./lib/auth";
 import { requireAuthMiddleware } from "./middleware/auth";
+import { corsMiddleware } from "./middleware/cors";
+import { errorHandler } from "./middleware/error-handler";
+import { config, getPort } from "./lib/config";
 
 const app = new Hono();
+
+// Phase 6: Production middleware
+app.use("*", corsMiddleware);
+app.onError(errorHandler);
 
 // ---- helpers ----
 const error = (code: ApiError["code"], message: string, details?: unknown) =>
@@ -126,7 +133,7 @@ app.post("/me/values", async (c) => {
 app.get("/me/values", async (c) => {
   try {
     // Phase 6.1: Use auth helper
-    const userId = getUserId(c);
+    const userId = await getUserId(c);
     if (!userId) {
       return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
     }
@@ -161,7 +168,7 @@ app.put("/me/struggle", async (c) => {
     }
 
     // Phase 6.1: Use auth helper
-    const userId = getUserId(c);
+    const userId = await getUserId(c);
     if (!userId) {
       return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
     }
@@ -191,7 +198,7 @@ app.put("/me/struggle", async (c) => {
 app.get("/me/struggle", async (c) => {
   try {
     // Phase 6.1: Use auth helper
-    const userId = getUserId(c);
+    const userId = await getUserId(c);
     if (!userId) {
       return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
     }
@@ -268,7 +275,7 @@ app.post("/sessions", async (c) => {
   const session = await prisma.session.create({
     data: {
       source: "user",
-      ownerUserId: finalUserId, // Ensure we track ownership for quota
+      ownerUserId: userId, // Ensure we track ownership for quota
       title: parsedBody.data.title,
       goalTag: parsedBody.data.goalTag,
       durationSec: undefined, // Infinite
@@ -343,24 +350,31 @@ app.get("/sessions/:id", async (c) => {
   let affirmationsMergedUrl: string | undefined;
   if (session.audio?.mergedAudioAsset?.url) {
     const filePath = session.audio.mergedAudioAsset.url;
-    const protocol = c.req.header("x-forwarded-proto") || "http";
-    const host = c.req.header("host") || "localhost:8787";
     
-    let affirmationsUrlRelative: string;
-    if (path.isAbsolute(filePath)) {
-      const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
-      affirmationsUrlRelative = relativePath.startsWith("storage/") 
-        ? `/${relativePath}` 
-        : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+    // If URL is already an S3/CloudFront URL (starts with http/https), use it directly
+    if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+      affirmationsMergedUrl = filePath;
     } else {
-      affirmationsUrlRelative = filePath.startsWith("storage/") 
-        ? `/${filePath}` 
-        : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+      // Local file path - construct URL for local serving
+      const protocol = c.req.header("x-forwarded-proto") || "http";
+      const host = c.req.header("host") || "localhost:8787";
+      
+      let affirmationsUrlRelative: string;
+      if (path.isAbsolute(filePath)) {
+        const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+        affirmationsUrlRelative = relativePath.startsWith("storage/") 
+          ? `/${relativePath}` 
+          : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+      } else {
+        affirmationsUrlRelative = filePath.startsWith("storage/") 
+          ? `/${filePath}` 
+          : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+      }
+      
+      affirmationsMergedUrl = affirmationsUrlRelative.startsWith("http") 
+        ? affirmationsUrlRelative 
+        : `${protocol}://${host}${affirmationsUrlRelative}`;
     }
-    
-    affirmationsMergedUrl = affirmationsUrlRelative.startsWith("http") 
-      ? affirmationsUrlRelative 
-      : `${protocol}://${host}${affirmationsUrlRelative}`;
   }
 
   // Map to strict SessionV3 (V3 compliance: no durationSec, pace is always "slow", no affirmationSpacingMs)
@@ -467,34 +481,42 @@ app.get("/sessions/:id/playback-bundle", async (c) => {
       return c.json(error("ASSET_ERROR", `Background asset not available: ${backgroundError.message}`, backgroundError), 500);
     }
     
-    // Construct affirmations URL (serve from storage)
+    // Construct affirmations URL
     if (!session.audio.mergedAudioAsset?.url) {
       return c.json(error("ASSET_ERROR", "Merged audio asset URL not found"), 500);
     }
     
-    // File path is relative to apps/api, e.g., "storage/merged/file.mp3"
-    // Static server serves /storage/* from apps/api/, so we need to construct the URL correctly
     const filePath = session.audio.mergedAudioAsset.url;
-    let affirmationsUrlRelative: string;
+    let affirmationsUrl: string;
     
-    // If path is absolute, make it relative to process.cwd() (apps/api)
-    if (path.isAbsolute(filePath)) {
-      const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
-      // If relative path already starts with "storage", use it directly
-      affirmationsUrlRelative = relativePath.startsWith("storage/") 
-        ? `/${relativePath}` 
-        : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+    // If URL is already an S3/CloudFront URL (starts with http/https), use it directly
+    if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+      affirmationsUrl = filePath;
     } else {
-      // Path is already relative, ensure it starts with /storage/
-      affirmationsUrlRelative = filePath.startsWith("storage/") 
-        ? `/${filePath}` 
-        : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+      // Local file path - construct URL for local serving
+      // File path is relative to apps/api, e.g., "storage/merged/file.mp3"
+      // Static server serves /storage/* from apps/api/, so we need to construct the URL correctly
+      let affirmationsUrlRelative: string;
+      
+      // If path is absolute, make it relative to process.cwd() (apps/api)
+      if (path.isAbsolute(filePath)) {
+        const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+        // If relative path already starts with "storage", use it directly
+        affirmationsUrlRelative = relativePath.startsWith("storage/") 
+          ? `/${relativePath}` 
+          : `${STORAGE_PUBLIC_BASE_URL}/${relativePath}`;
+      } else {
+        // Path is already relative, ensure it starts with /storage/
+        affirmationsUrlRelative = filePath.startsWith("storage/") 
+          ? `/${filePath}` 
+          : `${STORAGE_PUBLIC_BASE_URL}/${filePath}`;
+      }
+      
+      // Convert to absolute URL using request host (works for localhost, IP addresses, etc.)
+      affirmationsUrl = affirmationsUrlRelative.startsWith("http") 
+        ? affirmationsUrlRelative 
+        : `${protocol}://${host}${affirmationsUrlRelative}`;
     }
-    
-    // Convert to absolute URL using request host (works for localhost, IP addresses, etc.)
-    const affirmationsUrl = affirmationsUrlRelative.startsWith("http") 
-      ? affirmationsUrlRelative 
-      : `${protocol}://${host}${affirmationsUrlRelative}`;
 
     // Parse loudness and voiceActivity from metaJson if available
     let loudness: { affirmationsLUFS?: number; backgroundLUFS?: number; binauralLUFS?: number } | undefined;
@@ -552,8 +574,12 @@ export default app;
 
 // Bun entrypoint with static file serving (simple)
 if (import.meta.main) {
-  const port = Number(process.env.PORT ?? 8787);
+  const port = getPort();
   console.log(`[api] listening on http://localhost:${port}`);
+  console.log(`[api] Environment: ${config.env}`);
+  console.log(`[api] Clerk configured: ${config.clerkConfigured}`);
+  console.log(`[api] RevenueCat configured: ${config.revenueCatConfigured}`);
+  console.log(`[api] S3 configured: ${config.s3Configured}`);
 
   // Register job processors
   const { registerJobProcessor } = await import("./services/jobs");
@@ -566,10 +592,12 @@ if (import.meta.main) {
 
   // Custom handler for /storage/* with Range request support (required for iOS .m4a streaming)
   // Bun's serveStatic doesn't support Range requests, so we implement it manually
-  app.use("/storage/*", async (c) => {
+  // Also supports HEAD requests (required for iOS AVPlayer)
+  const serveStorage = async (c: any) => {
     const url = new URL(c.req.url);
     const requestPath = url.pathname.replace("/storage/", "");
     const filePath = path.resolve(process.cwd(), "storage", requestPath);
+    const isHead = c.req.method === "HEAD";
     
     try {
       const file = Bun.file(filePath);
@@ -645,13 +673,18 @@ if (import.meta.main) {
         c.header("Content-Length", chunkSize.toString());
         c.header("Accept-Ranges", "bytes");
         
+        // For HEAD requests, return headers without body
+        if (isHead) {
+          return c.body(null, 206);
+        }
+        
         // Stream only the requested byte range without loading entire file into memory
         // Use Bun.file().slice() for efficient range requests
         const slicedFile = file.slice(start, end + 1);
         // Create Response with proper headers and status code
         const response = new Response(slicedFile, { status: 206 });
         // Copy headers from context
-        c.res.headers.forEach((value, key) => {
+        c.res.headers.forEach((value: string, key: string) => {
           response.headers.set(key, value);
         });
         return response;
@@ -659,10 +692,16 @@ if (import.meta.main) {
         // No Range header - return full file
         c.header("Content-Length", fileSize.toString());
         c.header("Accept-Ranges", "bytes");
+        
+        // For HEAD requests, return headers without body
+        if (isHead) {
+          return c.body(null, 200);
+        }
+        
         // Create Response with proper headers
         const response = new Response(file);
         // Copy headers from context
-        c.res.headers.forEach((value, key) => {
+        c.res.headers.forEach((value: string, key: string) => {
           response.headers.set(key, value);
         });
         return response;
@@ -672,17 +711,20 @@ if (import.meta.main) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       return c.json(error("INTERNAL_ERROR", "Failed to serve file", errorMessage), 500);
     }
-  });
+  };
+  
+  app.on(["GET", "HEAD"], "/storage/*", serveStorage);
   
   // Custom handler for /assets/* with Range request support (required for iOS .m4a streaming)
   // Bun's serveStatic doesn't support Range requests, so we implement it manually
-  const PROJECT_ROOT = path.resolve(process.cwd(), "..", ".."); // Go up from apps/api to project root
-  app.use("/assets/*", async (c) => {
+  // Also supports HEAD requests (required for iOS AVPlayer)
+  const serveAssets = async (c: any) => {
     const url = new URL(c.req.url);
     // Decode URL-encoded path segments (e.g., "Babbling%20Brook.m4a" -> "Babbling Brook.m4a")
     const requestPath = decodeURIComponent(url.pathname.replace("/assets/", ""));   
     // Assets are in apps/assets/, so go up one level from api to apps, then into assets
     const filePath = path.resolve(process.cwd(), "..", "assets", requestPath);
+    const isHead = c.req.method === "HEAD";
     
     try {
       const file = Bun.file(filePath);
@@ -702,6 +744,12 @@ if (import.meta.main) {
       } else if (filePath.endsWith(".mp3")) {
         c.header("Content-Type", "audio/mpeg");
       }
+      
+      // Set CORS headers for audio assets (required for mobile app)
+      c.header("Access-Control-Allow-Origin", "*");
+      c.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      c.header("Access-Control-Allow-Headers", "Range");
+      c.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
       
       // Support Range requests (required for iOS AVPlayer)
       // RFC 7233 formats: bytes=start-end, bytes=start-, bytes=-suffix
@@ -758,13 +806,18 @@ if (import.meta.main) {
         c.header("Content-Length", chunkSize.toString());
         c.header("Accept-Ranges", "bytes");
         
+        // For HEAD requests, return headers without body
+        if (isHead) {
+          return c.body(null, 206);
+        }
+        
         // Stream only the requested byte range without loading entire file into memory
         // Use Bun.file().slice() for efficient range requests
         const slicedFile = file.slice(start, end + 1);
         // Create Response with proper headers and status code
         const response = new Response(slicedFile, { status: 206 });
         // Copy headers from context
-        c.res.headers.forEach((value, key) => {
+        c.res.headers.forEach((value: string, key: string) => {
           response.headers.set(key, value);
         });
         return response;
@@ -772,10 +825,16 @@ if (import.meta.main) {
         // No Range header - return full file
         c.header("Content-Length", fileSize.toString());
         c.header("Accept-Ranges", "bytes");
+        
+        // For HEAD requests, return headers without body
+        if (isHead) {
+          return c.body(null, 200);
+        }
+        
         // Create Response with proper headers
         const response = new Response(file);
         // Copy headers from context
-        c.res.headers.forEach((value, key) => {
+        c.res.headers.forEach((value: string, key: string) => {
           response.headers.set(key, value);
         });
         return response;
@@ -785,7 +844,9 @@ if (import.meta.main) {
       const errorMessage = err instanceof Error ? err.message : "Internal Server Error";
       return c.text(errorMessage, 500);
     }
-  });
+  };
+  
+  app.on(["GET", "HEAD"], "/assets/*", serveAssets);
 
   Bun.serve({ port, fetch: app.fetch });
 }

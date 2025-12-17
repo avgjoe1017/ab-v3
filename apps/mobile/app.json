@@ -15,7 +15,13 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsArbitraryLoadsForMedia": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +31,10 @@
     "plugins": [],
     "extra": {
       "API_BASE_URL": null,
-      "PHYSICAL_DEVICE_IP": "192.168.86.33"
+      "PHYSICAL_DEVICE_IP": "192.168.86.33",
+      "CLERK_PUBLISHABLE_KEY": "pk_test_Y2xhc3NpYy1zdGFybGluZy0yMi5jbGVyay5hY2NvdW50cy5kZXYk",
+      "REVENUECAT_IOS_API_KEY": "test_zGEtGcRpndWoDIuJoyogqvoIblk",
+      "REVENUECAT_ANDROID_API_KEY": "test_zGEtGcRpndWoDIuJoyogqvoIblk"
     }
   }
 }

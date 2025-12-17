@@ -39,15 +39,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing[6],
   },
   title: {
-    ...theme.typography.styles.h3,
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.bold,
-    color: theme.colors.text.secondary,
+    ...theme.typography.styles.sectionHeading,
   },
   action: {
-    ...theme.typography.styles.caption,
+    ...theme.typography.styles.metadata,
     color: theme.colors.accent.primary,
-    fontWeight: theme.typography.fontWeight.medium,
   },
 });
 

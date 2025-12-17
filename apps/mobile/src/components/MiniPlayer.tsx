@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
 import { apiGet } from "../lib/api";
 import { theme } from "../theme/tokens";
+import { getSessionArtImage } from "../lib/sessionArt";
 
 interface MiniPlayerProps {
   onPress?: () => void;
@@ -46,6 +47,9 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ onPress, sessionId }) =>
   }
 
   const sessionTitle = session?.title || "Session";
+  
+  // Get placeholder image for session art
+  const sessionArtImage = getSessionArtImage(activeSessionId);
 
   const handlePlayPause = () => {
     if (isPlaying || isPreroll) {
@@ -64,9 +68,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ onPress, sessionId }) =>
       onPress={onPress}
     >
       <View style={styles.content}>
-        <LinearGradient
-          colors={theme.colors.gradients.accent}
+        <Image
+          source={sessionArtImage}
           style={styles.image}
+          resizeMode="cover"
         />
         <View style={styles.textContainer}>
           <Text style={styles.title} numberOfLines={1}>
@@ -143,6 +148,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.full,
     borderWidth: 1,
     borderColor: theme.colors.border.default,
+    backgroundColor: theme.colors.background.secondary,
   },
   textContainer: {
     flex: 1,

@@ -1,10 +1,14 @@
 import path from "path";
 import fs from "fs-extra";
 import { STORAGE_PUBLIC_BASE_URL, ASSETS_PUBLIC_BASE_URL } from "../../index";
+import { isS3Configured, getS3Config } from "../storage/s3";
 
 /**
  * V3 Compliance: Resolve binaural and background assets from AudioAsset table or constants.
  * Returns platform-aware URLs for playback bundle.
+ * 
+ * iOS uses S3 URLs (HTTPS) to avoid App Transport Security issues.
+ * Android can use local HTTP URLs.
  */
 
 // Get project root: when running from apps/api, go up one level
@@ -15,9 +19,23 @@ const PROJECT_ROOT = path.resolve(process.cwd(), "..");
 const DEFAULT_BINAURAL_HZ = 10; // Alpha 10Hz
 const DEFAULT_BACKGROUND_ID = "Babbling Brook"; // From assets/audio/background/looped/
 
+// S3 URLs for static assets (uploaded via scripts/upload-static-assets-to-s3.ts)
+function getS3AssetUrl(s3Key: string): string | null {
+  const config = getS3Config();
+  if (!config) return null;
+  
+  // URL-encode the key (handles spaces in filenames)
+  const encodedKey = s3Key.split("/").map(segment => encodeURIComponent(segment)).join("/");
+  return `https://${config.bucket}.s3.${config.region}.amazonaws.com/${encodedKey}`;
+}
+
 /**
  * Get binaural asset URL by frequency (Hz)
  * Returns platform-aware URLs for iOS and Android
+ * 
+ * iOS: Uses S3 HTTPS URL to avoid App Transport Security issues
+ * Android: Uses local HTTP URL (no ATS restrictions)
+ * 
  * @param hz - Binaural frequency in Hz (default: 10)
  * @param apiBaseUrl - Base URL of the API server (e.g., "http://localhost:8787")
  */
@@ -29,12 +47,31 @@ export async function getBinauralAsset(
     loop: true;
     hz: number;
 }> {
-    // Assets are in project root: assets/audio/binaural/
+    // For iOS, prefer S3 URL (HTTPS) to avoid ATS issues
+    const s3Key = `audio/binaural/alpha_${hz}hz_400_3min.m4a`;
+    const s3Url = getS3AssetUrl(s3Key);
+    
+    // Fallback S3 URL for 10Hz if exact match might not exist
+    const fallbackS3Key = "audio/binaural/alpha_10hz_400_3min.m4a";
+    const fallbackS3Url = getS3AssetUrl(fallbackS3Key);
+    
+    // For Android, use local HTTP URL
     const assetPath = path.resolve(PROJECT_ROOT, "assets", "audio", "binaural", `alpha_${hz}hz_400_3min.m4a`);
     
-    // Fallback to available binaural if exact match not found
-    if (!(await fs.pathExists(assetPath))) {
-        // Try to find any alpha binaural
+    // Check if local file exists (for Android URL)
+    let localUrl: string;
+    if (await fs.pathExists(assetPath)) {
+        const relativePath = path.relative(PROJECT_ROOT, assetPath).replace(/\\/g, "/");
+        const basePath = relativePath.startsWith("assets/") 
+          ? `/${relativePath}` 
+          : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
+        const encodedPath = basePath
+          .split("/")
+          .map(segment => segment ? encodeURIComponent(segment) : segment)
+          .join("/");
+        localUrl = `${apiBaseUrl}${encodedPath}`;
+    } else {
+        // Try fallback
         const fallbackPath = path.resolve(PROJECT_ROOT, "assets", "audio", "binaural", "alpha_10hz_400_3min.m4a");
         if (await fs.pathExists(fallbackPath)) {
             const relativePath = path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/");
@@ -45,39 +82,18 @@ export async function getBinauralAsset(
               .split("/")
               .map(segment => segment ? encodeURIComponent(segment) : segment)
               .join("/");
-            const url = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
-            return {
-                urlByPlatform: { ios: url, android: url },
-                loop: true,
-                hz: 10,
-            };
+            localUrl = `${apiBaseUrl}${encodedPath}`;
+        } else {
+            throw new Error(`Binaural asset not found for ${hz}Hz. Looked in: ${assetPath}`);
         }
-        throw new Error(`Binaural asset not found for ${hz}Hz. Looked in: ${assetPath}`);
     }
-
-    // Generate absolute URL - need to use full URL for Zod validation
-    // ASSETS_PUBLIC_BASE_URL is "/assets", but we need full URL for mobile app
-    const relativePath = path.relative(PROJECT_ROOT, assetPath).replace(/\\/g, "/");
-    // relativePath will be like "assets/audio/binaural/alpha_10hz_400_3min.m4a"
-    // We need "/assets/assets/audio/..." but static server serves from PROJECT_ROOT
-    // So we just need "/assets/audio/..." - strip the "assets/" prefix if present
-    const basePath = relativePath.startsWith("assets/") 
-      ? `/${relativePath}` 
-      : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
     
-    // CRITICAL: URL-encode path segments (especially filenames with spaces)
-    // Split path, encode each segment, then rejoin
-    // This ensures "Babbling Brook.m4a" becomes "Babbling%20Brook.m4a"
-    const encodedPath = basePath
-      .split("/")
-      .map(segment => segment ? encodeURIComponent(segment) : segment)
-      .join("/");
-    
-    // Convert to absolute URL if it's a relative path
-    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
+    // iOS gets S3 URL (HTTPS), Android gets local URL (HTTP)
+    const iosUrl = s3Url || fallbackS3Url || localUrl;
+    const androidUrl = localUrl;
     
     return {
-        urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },
+        urlByPlatform: { ios: iosUrl, android: androidUrl },
         loop: true,
         hz,
     };
@@ -86,6 +102,10 @@ export async function getBinauralAsset(
 /**
  * Get background asset URL by ID
  * Returns platform-aware URLs for iOS and Android
+ * 
+ * iOS: Uses S3 HTTPS URL to avoid App Transport Security issues
+ * Android: Uses local HTTP URL (no ATS restrictions)
+ * 
  * @param backgroundId - Background asset ID (default: "Babbling Brook")
  * @param apiBaseUrl - Base URL of the API server (e.g., "http://localhost:8787")
  */
@@ -96,11 +116,33 @@ export async function getBackgroundAsset(
     urlByPlatform: { ios: string; android: string };
     loop: true;
 }> {
-    // Assets are in project root: assets/audio/background/looped/
+    // For iOS, prefer S3 URL (HTTPS) to avoid ATS issues
+    // Note: S3 key doesn't include "looped/" subdirectory
+    const s3Key = `audio/background/${backgroundId}.m4a`;
+    const s3Url = getS3AssetUrl(s3Key);
+    
+    // Fallback S3 URL
+    const fallbackS3Key = `audio/background/${DEFAULT_BACKGROUND_ID}.m4a`;
+    const fallbackS3Url = getS3AssetUrl(fallbackS3Key);
+    
+    // For Android, use local HTTP URL
+    // Local files are in assets/audio/background/looped/
     const assetPath = path.resolve(PROJECT_ROOT, "assets", "audio", "background", "looped", `${backgroundId}.m4a`);
     
-    // Fallback to default if not found
-    if (!(await fs.pathExists(assetPath))) {
+    // Check if local file exists (for Android URL)
+    let localUrl: string;
+    if (await fs.pathExists(assetPath)) {
+        const relativePath = path.relative(PROJECT_ROOT, assetPath).replace(/\\/g, "/");
+        const basePath = relativePath.startsWith("assets/") 
+          ? `/${relativePath}` 
+          : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
+        const encodedPath = basePath
+          .split("/")
+          .map(segment => segment ? encodeURIComponent(segment) : segment)
+          .join("/");
+        localUrl = `${apiBaseUrl}${encodedPath}`;
+    } else {
+        // Try fallback
         const fallbackPath = path.resolve(PROJECT_ROOT, "assets", "audio", "background", "looped", `${DEFAULT_BACKGROUND_ID}.m4a`);
         if (await fs.pathExists(fallbackPath)) {
             const relativePath = path.relative(PROJECT_ROOT, fallbackPath).replace(/\\/g, "/");
@@ -111,37 +153,18 @@ export async function getBackgroundAsset(
               .split("/")
               .map(segment => segment ? encodeURIComponent(segment) : segment)
               .join("/");
-            const url = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
-            return {
-                urlByPlatform: { ios: url, android: url },
-                loop: true,
-            };
+            localUrl = `${apiBaseUrl}${encodedPath}`;
+        } else {
+            throw new Error(`Background asset not found: ${backgroundId}. Looked in: ${assetPath}`);
         }
-        throw new Error(`Background asset not found: ${backgroundId}. Looked in: ${assetPath}`);
     }
-
-    // Generate absolute URL - need to use full URL for Zod validation
-    const relativePath = path.relative(PROJECT_ROOT, assetPath).replace(/\\/g, "/");
-    // relativePath will be like "assets/audio/background/looped/Babbling Brook.m4a"
-    // We need "/assets/assets/audio/..." but static server serves from PROJECT_ROOT
-    // So we just need "/assets/audio/..." - strip the "assets/" prefix if present
-    const basePath = relativePath.startsWith("assets/") 
-      ? `/${relativePath}` 
-      : `${ASSETS_PUBLIC_BASE_URL}/${relativePath}`;
     
-    // CRITICAL: URL-encode path segments (especially filenames with spaces)
-    // Split path, encode each segment, then rejoin
-    // This ensures "Babbling Brook.m4a" becomes "Babbling%20Brook.m4a"
-    const encodedPath = basePath
-      .split("/")
-      .map(segment => segment ? encodeURIComponent(segment) : segment)
-      .join("/");
-    
-    // Convert to absolute URL if it's a relative path
-    const absoluteUrl = encodedPath.startsWith("http") ? encodedPath : `${apiBaseUrl}${encodedPath}`;
+    // iOS gets S3 URL (HTTPS), Android gets local URL (HTTP)
+    const iosUrl = s3Url || fallbackS3Url || localUrl;
+    const androidUrl = localUrl;
     
     return {
-        urlByPlatform: { ios: absoluteUrl, android: absoluteUrl },
+        urlByPlatform: { ios: iosUrl, android: androidUrl },
         loop: true,
     };
 }

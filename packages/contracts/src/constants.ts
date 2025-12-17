@@ -7,9 +7,13 @@ export const AUDIO_PROFILE_V3 = {
     // Final shipping format (AAC .m4a for gapless playback)
     CODEC: "aac",
     CONTAINER: "m4a",
-    BITRATE_KBEPS: 192, // VBR or CBR
+    BITRATE_KBEPS: 192, // VBR or CBR - for voice/affirmations (needs clarity)
     SAMPLE_RATE_HZ: 48000,
     CHANNELS: 2, // Stereo
+    
+    // Optimized profiles for different content types
+    BACKGROUND_BITRATE_KBEPS: 96, // Lower bitrate for ambient/background (less complex audio)
+    BINAURAL_BITRATE_KBEPS: 96, // Lower bitrate for tones (very simple audio)
     
     // Legacy MP3 support (for backward compatibility during transition)
     LEGACY_CODEC: "mp3",

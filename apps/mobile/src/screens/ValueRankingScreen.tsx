@@ -30,12 +30,22 @@ export default function ValueRankingScreen({ selectedValues, onNext, onBack }: V
   const moveRank = (index: number, direction: "up" | "down") => {
     if (direction === "up" && index > 0) {
       const newRanked = [...rankedValues];
-      [newRanked[index], newRanked[index - 1]] = [newRanked[index - 1], newRanked[index]];
-      setRankedValues(newRanked);
+      const current = newRanked[index];
+      const previous = newRanked[index - 1];
+      if (current && previous) {
+        newRanked[index] = previous;
+        newRanked[index - 1] = current;
+        setRankedValues(newRanked);
+      }
     } else if (direction === "down" && index < rankedValues.length - 1) {
       const newRanked = [...rankedValues];
-      [newRanked[index], newRanked[index + 1]] = [newRanked[index + 1], newRanked[index]];
-      setRankedValues(newRanked);
+      const current = newRanked[index];
+      const next = newRanked[index + 1];
+      if (current && next) {
+        newRanked[index] = next;
+        newRanked[index + 1] = current;
+        setRankedValues(newRanked);
+      }
     }
   };
 
@@ -65,12 +75,12 @@ export default function ValueRankingScreen({ selectedValues, onNext, onBack }: V
               <View style={styles.rankControls}>
                 {index > 0 && (
                   <Pressable onPress={() => moveRank(index, "up")} style={styles.rankButton}>
-                    <MaterialIcons name="arrow-upward" size={20} color={theme.colors.primary} />
+                    <MaterialIcons name="arrow-upward" size={20} color={theme.colors.accent.primary} />
                   </Pressable>
                 )}
                 {index < rankedValues.length - 1 && (
                   <Pressable onPress={() => moveRank(index, "down")} style={styles.rankButton}>
-                    <MaterialIcons name="arrow-downward" size={20} color={theme.colors.primary} />
+                    <MaterialIcons name="arrow-downward" size={20} color={theme.colors.accent.primary} />
                   </Pressable>
                 )}
                 <Pressable onPress={() => moveToUnranked(value)} style={styles.removeButton}>
@@ -94,7 +104,7 @@ export default function ValueRankingScreen({ selectedValues, onNext, onBack }: V
                 style={styles.unrankedItem}
               >
                 <Text style={styles.valueText}>{value.valueText}</Text>
-                <MaterialIcons name="add" size={24} color={theme.colors.primary} />
+                <MaterialIcons name="add" size={24} color={theme.colors.accent.primary} />
               </Pressable>
             ))}
           </View>

@@ -1,8 +1,9 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet, ViewStyle } from "react-native";
+import { View, Text, Pressable, StyleSheet, ViewStyle, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { theme } from "../theme/tokens";
+import { getSessionArtImage } from "../lib/sessionArt";
 
 interface SessionTileProps {
   id?: string;
@@ -39,6 +40,9 @@ export const SessionTile: React.FC<SessionTileProps> = ({
 
   // Determine icon based on goalTag if not provided
   const displayIcon = icon || getIconForGoalTag(goalTag);
+  
+  // Get placeholder image for session art
+  const sessionArtImage = getSessionArtImage(displayId);
 
   return (
     <Pressable
@@ -51,21 +55,23 @@ export const SessionTile: React.FC<SessionTileProps> = ({
       ]}
       onPress={onPress}
     >
-      <LinearGradient
-        colors={getGradientForGoalTag(goalTag)}
+      <View
         style={[
           styles.imageContainer,
           isCompact && styles.imageContainerCompact,
           isLarge && styles.imageContainerLarge,
         ]}
       >
-        <View style={styles.iconContainer}>
-          <MaterialIcons
-            name={displayIcon}
-            size={isCompact ? 20 : isLarge ? 32 : 24}
-            color={theme.colors.accent.secondary}
-          />
-        </View>
+        <Image
+          source={sessionArtImage}
+          style={styles.image}
+          resizeMode="cover"
+        />
+        {/* Gradient overlay for better text/icon visibility */}
+        <LinearGradient
+          colors={["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0.4)"]}
+          style={styles.imageOverlay}
+        />
         {!isCompact && (
           <View style={styles.playOverlay}>
             <View style={styles.playButton}>
@@ -89,7 +95,7 @@ export const SessionTile: React.FC<SessionTileProps> = ({
             />
           </Pressable>
         )}
-      </LinearGradient>
+      </View>
       <View style={styles.content}>
         <Text
           style={[
@@ -177,6 +183,18 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background.secondary,
     borderWidth: 1,
     borderColor: theme.colors.border.subtle,
+    position: "relative",
+  },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+  imageOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: "50%",
   },
   imageContainerCompact: {
     aspectRatio: 1.2,
@@ -219,10 +237,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing[1],
   },
   title: {
-    ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.secondary,
+    ...theme.typography.styles.cardTitle,
   },
   titleCompact: {
     fontSize: theme.typography.fontSize.sm,
