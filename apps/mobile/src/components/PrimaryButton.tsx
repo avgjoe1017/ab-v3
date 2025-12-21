@@ -136,7 +136,7 @@ const styles = StyleSheet.create({
   },
   label: {
     ...theme.typography.styles.button,
-    color: theme.colors.text.primary,
+    color: theme.colors.text.inverse,
   },
   buttonPressed: {
     opacity: 0.8,

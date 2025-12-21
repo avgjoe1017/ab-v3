@@ -11,6 +11,7 @@
 
 ```bash
 OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini  # Optional: gpt-4o, gpt-4.1, gpt-4.1-mini (default)
 ```
 
 ### 2. ElevenLabs API Key (Optional)
@@ -132,6 +133,7 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 ```bash
 # Core
 OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini  # Optional: gpt-4o, gpt-4.1, gpt-4.1-mini
 ELEVENLABS_API_KEY=...
 
 # Production (when ready)

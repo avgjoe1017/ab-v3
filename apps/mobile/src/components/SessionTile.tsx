@@ -1,9 +1,9 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet, ViewStyle, Image } from "react-native";
+import { View, Text, Pressable, StyleSheet, ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { theme } from "../theme/tokens";
-import { getSessionArtImage } from "../lib/sessionArt";
+import { getSessionGradient } from "../lib/sessionArt";
 
 interface SessionTileProps {
   id?: string;
@@ -20,7 +20,8 @@ interface SessionTileProps {
 
 /**
  * SessionTile - Standard session card component
- * Displays session with image/title/subtitle + play affordance
+ * Displays session with gradient/icon + title/subtitle + play affordance
+ * Now uses DuotoneCard-style gradients instead of images
  */
 export const SessionTile: React.FC<SessionTileProps> = ({
   id,
@@ -38,11 +39,9 @@ export const SessionTile: React.FC<SessionTileProps> = ({
   const isCompact = variant === "compact";
   const isLarge = variant === "large";
 
-  // Determine icon based on goalTag if not provided
-  const displayIcon = icon || getIconForGoalTag(goalTag);
-  
-  // Get placeholder image for session art
-  const sessionArtImage = getSessionArtImage(displayId);
+  // Get gradient and icon from session art utility
+  const sessionGradient = getSessionGradient(displayId, goalTag);
+  const displayIcon = icon || sessionGradient.icon;
 
   return (
     <Pressable
@@ -62,39 +61,49 @@ export const SessionTile: React.FC<SessionTileProps> = ({
           isLarge && styles.imageContainerLarge,
         ]}
       >
-        <Image
-          source={sessionArtImage}
-          style={styles.image}
-          resizeMode="cover"
-        />
-        {/* Gradient overlay for better text/icon visibility */}
         <LinearGradient
-          colors={["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0.4)"]}
-          style={styles.imageOverlay}
-        />
-        {!isCompact && (
-          <View style={styles.playOverlay}>
-            <View style={styles.playButton}>
-              <MaterialIcons name="play-arrow" size={16} color="#fff" />
-            </View>
-          </View>
-        )}
-        {onToggleSaved && (
-          <Pressable
-            style={styles.savedButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              onToggleSaved();
-            }}
-            hitSlop={8}
-          >
+          colors={sessionGradient.colors}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.gradient}
+        >
+          {/* Oversized clipped icon */}
+          <View style={styles.iconBackground}>
             <MaterialIcons
-              name={isSaved ? "bookmark" : "bookmark-border"}
-              size={20}
-              color={isSaved ? theme.colors.accent.highlight : theme.colors.text.primary}
+              name={displayIcon}
+              size={isCompact ? 80 : isLarge ? 120 : 100}
+              color={sessionGradient.iconColor}
+              style={styles.oversizedIcon}
             />
-          </Pressable>
-        )}
+          </View>
+          
+          {/* Play button overlay */}
+          {!isCompact && (
+            <View style={styles.playOverlay}>
+              <View style={styles.playButton}>
+                <MaterialIcons name="play-arrow" size={16} color="#fff" />
+              </View>
+            </View>
+          )}
+          
+          {/* Saved button */}
+          {onToggleSaved && (
+            <Pressable
+              style={styles.savedButton}
+              onPress={(e) => {
+                e.stopPropagation();
+                onToggleSaved();
+              }}
+              hitSlop={8}
+            >
+              <MaterialIcons
+                name={isSaved ? "bookmark" : "bookmark-border"}
+                size={18}
+                color="#ffffff"
+              />
+            </Pressable>
+          )}
+        </LinearGradient>
       </View>
       <View style={styles.content}>
         <Text
@@ -117,42 +126,6 @@ export const SessionTile: React.FC<SessionTileProps> = ({
   );
 };
 
-// Helper functions
-function getIconForGoalTag(goalTag?: string): keyof typeof MaterialIcons.glyphMap {
-  switch (goalTag) {
-    case "anxiety":
-    case "beginner":
-      return "self-improvement";
-    case "resilience":
-      return "bolt";
-    case "productivity":
-      return "check-circle";
-    case "sleep":
-      return "bedtime";
-    case "focus":
-      return "psychology";
-    default:
-      return "self-improvement";
-  }
-}
-
-function getGradientForGoalTag(goalTag?: string): [string, string, ...string[]] {
-  switch (goalTag) {
-    case "sleep":
-      return ["#3b82f6", "#1e40af"];
-    case "focus":
-      return ["#a855f7", "#7c3aed"];
-    case "anxiety":
-    case "beginner":
-      return ["#14b8a6", "#0d9488"];
-    case "resilience":
-    case "productivity":
-      return ["#6366f1", "#8b5cf6"];
-    default:
-      return ["#6366f1", "#8b5cf6"];
-  }
-}
-
 function formatGoalTag(goalTag: string): string {
   return goalTag
     .split("-")
@@ -173,28 +146,14 @@ const styles = StyleSheet.create({
     width: 180,
   },
   pressed: {
-    opacity: 0.8,
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
   imageContainer: {
     width: "100%",
     aspectRatio: 1,
     borderRadius: theme.radius.lg,
     overflow: "hidden",
-    backgroundColor: theme.colors.background.secondary,
-    borderWidth: 1,
-    borderColor: theme.colors.border.subtle,
-    position: "relative",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-  },
-  imageOverlay: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: "50%",
   },
   imageContainerCompact: {
     aspectRatio: 1.2,
@@ -202,23 +161,29 @@ const styles = StyleSheet.create({
   imageContainerLarge: {
     borderRadius: theme.radius.xl,
   },
-  iconContainer: {
+  gradient: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    position: "relative",
+  },
+  iconBackground: {
+    position: "absolute",
+    top: -10,
+    right: -15,
+    opacity: 0.4,
+  },
+  oversizedIcon: {
+    // Positioned to be partially clipped
   },
   playOverlay: {
     position: "absolute",
-    inset: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    opacity: 0,
+    bottom: theme.spacing[2],
+    left: theme.spacing[2],
   },
   playButton: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.accent.primary,
+    backgroundColor: "rgba(255, 255, 255, 0.3)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -226,10 +191,10 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: theme.spacing[2],
     right: theme.spacing[2],
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderRadius: theme.radius.full,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -250,4 +215,3 @@ const styles = StyleSheet.create({
     color: theme.colors.text.tertiary,
   },
 });
-

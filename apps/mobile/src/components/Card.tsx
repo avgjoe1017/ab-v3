@@ -49,20 +49,23 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background.surface,
     borderRadius: theme.radius.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    borderColor: theme.colors.border.glass,
     padding: theme.spacing[6],
+    ...theme.shadows.ios.sm,
+    ...theme.shadows.android.sm,
   },
   cardElevated: {
     backgroundColor: theme.colors.background.surfaceElevated,
-    borderColor: theme.colors.border.strong,
-    ...theme.shadows.ios.md,
-    ...theme.shadows.android.md,
+    borderColor: "rgba(255, 255, 255, 0.6)",
+    ...theme.shadows.glass,
   },
   cardSurface: {
-    backgroundColor: theme.colors.background.secondary,
+    backgroundColor: theme.colors.background.surfaceSubtle,
+    borderColor: theme.colors.border.glass,
   },
   cardPressed: {
-    opacity: 0.8,
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
 });
 

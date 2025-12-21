@@ -1,453 +1,504 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  Pressable,
+  ActivityIndicator,
+  Keyboard,
+  Platform,
+  Alert,
+} from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "../lib/api";
-import { useDraftStore } from "../state/useDraftStore";
-import { useEntitlement } from "../hooks/useEntitlement";
-import { useAuthToken } from "../lib/auth";
-import { getAudioEngine } from "@ab/audio-engine";
-import { AppScreen, PrimaryButton, SessionTile, SectionHeader, MiniPlayer, IconButton, Chip, Card, ScienceCard } from "../components";
+import { useFocusEffect } from "@react-navigation/native";
+import { AppScreen, MiniPlayer } from "../components";
 import { theme } from "../theme";
-import { useActiveProgram } from "../hooks";
-import { useOnboardingPreferences } from "../hooks/useOnboardingPreferences";
-import { getRandomScienceCard } from "../lib/science";
+import { getAudioEngine } from "@ab/audio-engine";
+import { useDraftStore } from "../state/useDraftStore";
+import {
+  getLastSession,
+  saveLastSession,
+  getRecentIntentions,
+  upsertRecentIntention,
+  deleteRecentIntention,
+  type LastSession,
+  type RecentIntention,
+} from "../storage/homeStorage";
+import { useQuery } from "@tanstack/react-query";
+import { apiGet, apiPost } from "../lib/api";
 import type { SessionV3 } from "@ab/contracts";
-import { getRecentSessions } from "../storage/recentSessions";
+import { useAuthToken } from "../lib/auth";
+import { getUserValues, getUserStruggle } from "../lib/values";
+import { decideAudioSettings, packToSessionPayload, type AffirmationPack } from "../lib/affirmationPack";
 
-type SessionRow = { id: string; title: string; goalTag?: string };
+const MAX_INTENTION_LENGTH = 160;
+const CHAR_COUNTER_THRESHOLD = 140;
 
 export default function HomeScreen({ navigation }: any) {
-  const { initializeDraft } = useDraftStore();
-  const { entitlement, refreshEntitlement } = useEntitlement();
+  const [inputText, setInputText] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [lastSession, setLastSession] = useState<LastSession | null>(null);
+  const [recentIntentions, setRecentIntentions] = useState<RecentIntention[]>([]);
+  const [affirmationCount, setAffirmationCount] = useState<6 | 12 | 18 | 24>(12);
+  const [reviewPack, setReviewPack] = useState<AffirmationPack | null>(null);
+  
+  const inputRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  
+  const { initializeDraft, updateDraft } = useDraftStore();
   const engine = useMemo(() => getAudioEngine(), []);
   const [snapshot, setSnapshot] = useState(() => engine.getState());
+  const currentSessionId = snapshot.sessionId;
+  const authToken = useAuthToken();
 
   useEffect(() => engine.subscribe((s) => setSnapshot(s)), [engine]);
 
-  useEffect(() => {
-    refreshEntitlement();
-  }, [refreshEntitlement]);
+  // Load data on mount and focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadHomeData();
+    }, [])
+  );
 
-  const authToken = useAuthToken();
-  
-  const { data: sessions, isLoading, error } = useQuery({
-    queryKey: ["sessions", authToken],
-    queryFn: async () => {
-      try {
-        const res = await apiGet<{ sessions: SessionRow[] }>("/sessions", authToken);
-        return res.sessions;
-      } catch (err) {
-        console.error("[HomeScreen] Error fetching sessions:", err);
-        throw err;
-      }
-    },
-    refetchOnWindowFocus: true,
-    staleTime: 0,
-  });
-
-  const { data: onboardingPrefs } = useOnboardingPreferences();
-
-  const handleSessionPress = (sessionId: string) => {
-    navigation.getParent()?.navigate("SessionDetail", { sessionId });
+  const loadHomeData = async () => {
+    const [session, intentions] = await Promise.all([
+      getLastSession(),
+      getRecentIntentions(),
+    ]);
+    setLastSession(session);
+    setRecentIntentions(intentions);
   };
 
-  // Filter sessions based on onboarding goal preference, or fallback to beginner sessions
-  const beginnerSessions = useMemo(() => {
-    if (isLoading || !sessions) return [];
-    if (sessions.length === 0) return [];
-    
-    // If user has onboarding goal preference, prioritize sessions with that goalTag
-    const userGoal = onboardingPrefs?.goal;
-    
-    if (userGoal) {
-      // Filter by user's selected goal
-      const goalSessions = sessions.filter(s => s.goalTag === userGoal);
-      if (goalSessions.length > 0) {
-        return goalSessions;
+  // Fetch last session details if we have a session ID
+  const { data: lastSessionDetails } = useQuery({
+    queryKey: ["last-session-details", lastSession?.id],
+    queryFn: async () => {
+      if (!lastSession) return null;
+      try {
+        const res = await apiGet<SessionV3>(`/sessions/${lastSession.id}`);
+        return res;
+      } catch (error) {
+        console.error("[HomeScreen] Error fetching last session:", error);
+        return null;
       }
+    },
+    enabled: !!lastSession,
+  });
+
+  const trimmedInput = inputText.trim();
+  const hasInput = trimmedInput.length > 0;
+  const inputLength = inputText.length;
+  const showCharCounter = inputLength >= CHAR_COUNTER_THRESHOLD;
+  const isNearLimit = inputLength >= MAX_INTENTION_LENGTH;
+
+  const handleInputChange = (text: string) => {
+    if (text.length <= MAX_INTENTION_LENGTH) {
+      setInputText(text);
     }
+  };
+
+  const handleClearInput = () => {
+    setInputText("");
+    inputRef.current?.focus();
+  };
+
+  const handleQuickGenerate = async () => {
+    if (!hasInput || isGenerating) return;
+
+    setIsGenerating(true);
     
-    // Fallback to beginner-friendly sessions
-    return sessions.filter(s => {
-      return (
-        s.goalTag === "beginner" ||
-        s.goalTag === "anxiety" ||
-        s.goalTag === "resilience" ||
-        s.goalTag === "productivity" ||
-        (s.title && s.title.toUpperCase().includes("EASE IN")) ||
-        (s.title && s.title.toUpperCase().includes("CALM DOWN")) ||
-        (s.title && s.title.toUpperCase().includes("HARD DAY")) ||
-        (s.title && s.title.toUpperCase().includes("NEXT RIGHT THING"))
+    try {
+      // Save to recent intentions
+      await upsertRecentIntention(trimmedInput);
+      await loadHomeData(); // Refresh recent intentions
+      
+      // Fetch user values and struggle if available
+      let userValues: string[] = [];
+      let userStruggle: string | undefined = undefined;
+
+      try {
+        const valuesResponse = await getUserValues(authToken);
+        userValues = valuesResponse.values.map(v => v.valueText);
+      } catch (err) {
+        console.log("[HomeScreen] Could not fetch user values, using empty array");
+      }
+
+      try {
+        const struggleResponse = await getUserStruggle(authToken);
+        userStruggle = struggleResponse.struggle || undefined;
+      } catch (err) {
+        console.log("[HomeScreen] Could not fetch user struggle, skipping");
+      }
+
+      // Determine session type from goal
+      const goalLower = trimmedInput.toLowerCase();
+      let sessionType = "Meditate";
+      if (goalLower.includes("focus") || goalLower.includes("work") || goalLower.includes("concentration")) {
+        sessionType = "Focus";
+      } else if (goalLower.includes("sleep") || goalLower.includes("rest")) {
+        sessionType = "Sleep";
+      } else if (goalLower.includes("anxiety") || goalLower.includes("calm")) {
+        sessionType = "Anxiety Relief";
+      }
+
+      // Generate affirmations
+      const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
+        "/affirmations/generate",
+        {
+          values: userValues,
+          sessionType,
+          struggle: userStruggle,
+          goal: trimmedInput, // User's written goal - most important input
+          count: affirmationCount,
+        },
+        authToken
       );
-    });
-  }, [sessions, isLoading, onboardingPrefs?.goal]);
 
-  const isPlaying = snapshot.status === "playing" || snapshot.status === "preroll";
-  const currentSessionId = snapshot.sessionId;
-  const { data: activeProgram } = useActiveProgram();
+      // Auto-select audio settings
+      const audioSettings = decideAudioSettings(trimmedInput);
 
-  // Fetch recent sessions for Continue Practice
-  const { data: recentSessions } = useQuery({
-    queryKey: ["recent-sessions"],
-    queryFn: getRecentSessions,
-  });
+      // Create pack for review gate
+      const pack: AffirmationPack = {
+        goal: trimmedInput,
+        affirmations: response.affirmations,
+        style: "balanced",
+        length: affirmationCount,
+        audioSettings,
+      };
 
-  // Get most recent session for Continue Practice
-  const continueSession = useMemo(() => {
-    if (!recentSessions || recentSessions.length === 0) return null;
-    return recentSessions[0]; // Most recent is first
-  }, [recentSessions]);
-
-  // Fetch continue session details
-  const { data: continueSessionDetails } = useQuery({
-    queryKey: ["continue-session", continueSession?.sessionId],
-    queryFn: async () => {
-      if (!continueSession) return null;
-      try {
-        const res = await apiGet<SessionV3>(`/sessions/${continueSession.sessionId}`, authToken);
-        return res;
-      } catch (err) {
-        console.error("[HomeScreen] Error fetching continue session:", err);
-        return null;
-      }
-    },
-    enabled: !!continueSession,
-  });
-
-  // Calculate progress for continue session
-  const continueProgress = useMemo(() => {
-    if (!continueSession || !continueSessionDetails) return null;
-    // Estimate duration (default 30 minutes if not available)
-    const estimatedDurationMs = 30 * 60 * 1000; // 30 minutes
-    const playedFor = continueSession.playedFor || 0;
-    const progress = Math.min(playedFor / estimatedDurationMs, 1);
-    const remainingMs = Math.max(estimatedDurationMs - playedFor, 0);
-    const remainingMinutes = Math.round(remainingMs / (60 * 1000));
-    return { progress, remainingMinutes };
-  }, [continueSession, continueSessionDetails]);
-
-  const handleContinuePress = () => {
-    if (continueSession) {
-      handleSessionPress(continueSession.sessionId);
+      setReviewPack(pack);
+      setIsGenerating(false);
+    } catch (error) {
+      console.error("[HomeScreen] Error in quick generate:", error);
+      setIsGenerating(false);
+      Alert.alert(
+        "Generation Failed",
+        error instanceof Error 
+          ? error.message 
+          : "Could not generate affirmations. Please check your connection and try again."
+      );
     }
   };
 
-  // Get a random science card for "Did you know?" section
-  const scienceCard = useMemo(() => getRandomScienceCard(), []);
+  const handleStartSession = async () => {
+    if (!reviewPack) return;
 
-  // Find hero session (prefer sleep-related, fallback to first session)
-  const heroSession = useMemo(() => {
-    if (!sessions || sessions.length === 0) return null;
-    // Try to find a sleep-related session
-    const sleepSession = sessions.find(s => 
-      s.goalTag === "sleep" || 
-      s.title.toLowerCase().includes("sleep") ||
-      s.title.toLowerCase().includes("wind down")
-    );
-    return sleepSession || sessions[0];
-  }, [sessions]);
-
-  // Fetch hero session details with affirmations
-  const { data: heroSessionDetails } = useQuery({
-    queryKey: ["hero-session", heroSession?.id, authToken],
-    queryFn: async () => {
-      if (!heroSession) return null;
-      try {
-        const res = await apiGet<SessionV3>(`/sessions/${heroSession.id}`, authToken);
-        return res;
-      } catch (err) {
-        console.error("[HomeScreen] Error fetching hero session:", err);
-        return null;
-      }
-    },
-    enabled: !!heroSession,
-  });
-
-  // State for current displayed affirmation
-  const [currentAffirmation, setCurrentAffirmation] = useState<string | null>(null);
-
-  // Initialize affirmation when session details are loaded
-  useEffect(() => {
-    if (heroSessionDetails && heroSessionDetails.affirmations.length > 0) {
-      // Pick a random affirmation on initial load
-      const randomIndex = Math.floor(Math.random() * heroSessionDetails.affirmations.length);
-      const affirmation = heroSessionDetails.affirmations[randomIndex];
-      if (affirmation) {
-        setCurrentAffirmation(affirmation);
-      }
-    }
-  }, [heroSessionDetails]);
-
-  const handleDifferentAffirmation = () => {
-    if (!heroSessionDetails || heroSessionDetails.affirmations.length === 0) return;
-    
-    // Pick a different random affirmation
-    const availableAffirmations = heroSessionDetails.affirmations.filter(
-      a => a !== currentAffirmation
-    );
-    
-    if (availableAffirmations.length > 0) {
-      const randomIndex = Math.floor(Math.random() * availableAffirmations.length);
-      const affirmation = availableAffirmations[randomIndex];
-      if (affirmation) {
-        setCurrentAffirmation(affirmation);
-      }
-    } else {
-      // If only one affirmation, just use it
-      const affirmation = heroSessionDetails.affirmations[0];
-      if (affirmation) {
-        setCurrentAffirmation(affirmation);
-      }
+    try {
+      setIsGenerating(true);
+      const payload = packToSessionPayload(reviewPack);
+      const res = await apiPost<SessionV3>("/sessions", payload, authToken);
+      
+      // Clear review pack and input
+      setReviewPack(null);
+      setInputText("");
+      setIsGenerating(false);
+      
+      // Navigate to Player
+      navigation.getParent()?.navigate("Player", { sessionId: res.id });
+    } catch (error) {
+      console.error("[HomeScreen] Failed to create session:", error);
+      setIsGenerating(false);
+      Alert.alert("Failed to Start", "Could not create session. Please try again.");
     }
   };
 
-  const handleBeginPress = () => {
-    if (!heroSession) {
-      console.warn("[HomeScreen] No hero session available");
-      return;
+  const handleCustomSession = async () => {
+    if (!hasInput || isGenerating) return;
+
+    setIsGenerating(true);
+    
+    try {
+      // Save to recent intentions
+      await upsertRecentIntention(trimmedInput);
+      await loadHomeData();
+      
+      // Prefill draft with intention for custom builder
+      initializeDraft();
+      updateDraft({
+        title: trimmedInput,
+        goalTag: "General",
+      });
+
+      // Navigate to Editor (Custom Session Builder)
+      navigation.getParent()?.navigate("Editor");
+      
+      // Clear input after successful navigation
+      setTimeout(() => {
+        setInputText("");
+        setIsGenerating(false);
+      }, 300);
+    } catch (error) {
+      console.error("[HomeScreen] Error in custom session:", error);
+      setIsGenerating(false);
     }
-    handleSessionPress(heroSession.id);
+  };
+
+  const handleInputSubmit = () => {
+    if (hasInput) {
+      handleQuickGenerate();
+    }
+  };
+
+  const handleRecentIntentionPress = (intention: RecentIntention) => {
+    setInputText(intention.text);
+    // Scroll to input
+    setTimeout(() => {
+      inputRef.current?.focus();
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }, 100);
+  };
+
+  const handleContinueLastSession = () => {
+    if (lastSession) {
+      navigation.getParent()?.navigate("Player", { sessionId: lastSession.id });
+    }
+  };
+
+  const handleDeleteRecent = async (id: string) => {
+    await deleteRecentIntention(id);
+    await loadHomeData();
   };
 
   const handleMiniPlayerPress = () => {
     if (currentSessionId) {
-      // Navigate to Player screen in the stack
       navigation.getParent()?.navigate("Player", { sessionId: currentSessionId });
     }
   };
 
+  // Format duration for display
+  const formatDuration = (sec: number) => {
+    const minutes = Math.round(sec / 60);
+    return `${minutes} min`;
+  };
+
+  // Format last session metadata
+  const getLastSessionMetadata = () => {
+    if (!lastSession) return "";
+    const parts: string[] = [];
+    if (lastSession.durationSec) {
+      parts.push(formatDuration(lastSession.durationSec));
+    }
+    if (lastSession.voiceDisplayName) {
+      parts.push(lastSession.voiceDisplayName);
+    }
+    if (lastSession.beatDisplayName) {
+      parts.push(lastSession.beatDisplayName);
+    }
+    if (lastSession.backgroundDisplayName) {
+      parts.push(lastSession.backgroundDisplayName);
+    }
+    return parts.join(" · ") || "Session";
+  };
+
   return (
     <AppScreen>
-      <ScrollView 
+      <ScrollView
+        ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.headerGreeting}>Good evening, Joe.</Text>
-            <Text style={styles.headerSubtext}>Time to unwind</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <View style={styles.dayBadge}>
-              <Text style={styles.dayBadgeText}>Day 12</Text>
-            </View>
-            <IconButton
-              icon="account-circle"
-              onPress={() => navigation.getParent()?.navigate("Settings")}
-              variant="filled"
+          <Text style={styles.headerTitle}>WELCOME BACK.</Text>
+          <Text style={styles.headerSubtitle}>What are we reinforcing today?</Text>
+        </View>
+
+        {/* Intention Input */}
+        <View style={styles.inputSection}>
+          <View style={styles.inputContainer}>
+            <TextInput
+              ref={inputRef}
+              style={styles.input}
+              placeholder="Start typing here…"
+              placeholderTextColor={theme.colors.text.tertiary}
+              value={inputText}
+              onChangeText={handleInputChange}
+              multiline
+              maxLength={MAX_INTENTION_LENGTH}
+              returnKeyType="go"
+              onSubmitEditing={handleInputSubmit}
+              blurOnSubmit={false}
             />
+            {hasInput && (
+              <Pressable style={styles.clearButton} onPress={handleClearInput}>
+                <MaterialIcons name="close" size={18} color={theme.colors.text.tertiary} />
+              </Pressable>
+            )}
+          </View>
+          <View style={styles.inputHelper}>
+            <Text style={styles.helperText}>
+              One sentence is enough. You can edit before you start.
+            </Text>
+            {showCharCounter && (
+              <Text style={[styles.charCounter, isNearLimit && styles.charCounterWarning]}>
+                {inputLength} / {MAX_INTENTION_LENGTH}
+              </Text>
+            )}
           </View>
         </View>
 
-        {/* Active Program Prompt */}
-        {activeProgram && (
-          <View style={styles.programPromptContainer}>
-            <Card
-              variant="elevated"
-              onPress={() => navigation.getParent()?.navigate("ProgramDetail", { programId: activeProgram.program.id })}
-              style={styles.programPromptCard}
-            >
-              <View style={styles.programPromptContent}>
-                <View style={styles.programPromptIconContainer}>
-                  <MaterialIcons name="book" size={20} color={theme.colors.accent.primary} />
-                </View>
-                <View style={styles.programPromptText}>
-                  <Text style={styles.programPromptTitle}>Continue {activeProgram.program.title}</Text>
-                  <Text style={styles.programPromptSubtitle}>Day {activeProgram.currentDay} of {activeProgram.program.totalDays}</Text>
-                </View>
-                <MaterialIcons name="arrow-forward" size={20} color={theme.colors.text.tertiary} />
-              </View>
-            </Card>
-          </View>
-        )}
-
-        {/* SOS Entry Point */}
-        <View style={styles.sosContainer}>
-          <Card
-            variant="default"
-            onPress={() => navigation.getParent()?.navigate("SOS")}
-            style={styles.sosCard}
-          >
-            <View style={styles.sosContent}>
-              <View style={styles.sosIconContainer}>
-                <MaterialIcons name="emergency" size={20} color={theme.colors.semantic.error} />
-              </View>
-              <View style={styles.sosText}>
-                <Text style={styles.sosTitle}>Need immediate help?</Text>
-                <Text style={styles.sosSubtitle}>Quick 2-6 minute sessions</Text>
-              </View>
-              <MaterialIcons name="arrow-forward" size={20} color={theme.colors.text.tertiary} />
-            </View>
-          </Card>
-        </View>
-
-        {/* Hero Question */}
-        <View style={styles.heroQuestionContainer}>
-          <Text style={styles.heroQuestion}>What do you need to hear today?</Text>
-        </View>
-
-        {/* Hero Card */}
-        <View style={styles.heroCardContainer}>
-          <LinearGradient
-            colors={theme.colors.gradients.surface}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroCardBackground}
-          >
-            <View style={styles.heroCardContent}>
-              <View style={styles.heroCardTop}>
-                <Chip
-                  label="Based on values: Peace, Autonomy"
-                  variant="default"
-                />
-              </View>
-              <View style={styles.heroCardInfo}>
-                <Text style={styles.heroCardTitle}>
-                  {heroSessionDetails?.title || heroSession?.title || "Wind Down for Sleep"}
-                </Text>
-                <View style={styles.heroCardMeta}>
-                  <MaterialIcons name="waves" size={18} color={theme.colors.text.tertiary} />
-                  <Text style={styles.heroCardMetaText}>
-                    {heroSessionDetails?.brainwaveState 
-                      ? `${heroSessionDetails.brainwaveState} ${heroSessionDetails.frequencyHz || ''}Hz`
-                      : heroSessionDetails?.goalTag 
-                        ? heroSessionDetails.goalTag
-                        : "Deep Rest"}
-                    {heroSessionDetails?.frequencyHz ? ` · ${heroSessionDetails.frequencyHz}Hz` : ""}
-                    {" · 30 min"}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.heroCardQuote}>
-                <Text style={styles.heroCardQuoteText}>
-                  {currentAffirmation 
-                    ? `"${currentAffirmation}"`
-                    : heroSessionDetails?.affirmations?.[0]
-                      ? `"${heroSessionDetails.affirmations[0]}"`
-                      : '"I release what I cannot control. My mind is quiet. My body is safe."'}
-                </Text>
-              </View>
-              <View style={styles.heroCardActions}>
-                <PrimaryButton
-                  label="BEGIN"
-                  onPress={handleBeginPress}
-                  icon="play-arrow"
-                  iconPosition="left"
-                  variant="gradient"
-                  size="md"
-                  style={styles.beginButton}
-                />
-                <Pressable 
-                  style={styles.differentButton}
-                  onPress={handleDifferentAffirmation}
-                  disabled={!heroSessionDetails || !currentAffirmation}
+        {/* Affirmation Count Selector */}
+        {hasInput && !reviewPack && (
+          <View style={styles.countSection}>
+            <Text style={styles.countLabel}>Number of Affirmations</Text>
+            <View style={styles.countOptions}>
+              {([6, 12, 18, 24] as const).map((count) => (
+                <Pressable
+                  key={count}
+                  style={[
+                    styles.countOption,
+                    affirmationCount === count && styles.countOptionActive,
+                  ]}
+                  onPress={() => setAffirmationCount(count)}
                 >
-                  <MaterialIcons name="cached" size={18} color={theme.colors.text.tertiary} />
-                  <Text style={styles.differentButtonText}>Hear a different affirmation</Text>
+                  <Text
+                    style={[
+                      styles.countOptionText,
+                      affirmationCount === count && styles.countOptionTextActive,
+                    ]}
+                  >
+                    {count}
+                  </Text>
                 </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Review Gate */}
+        {reviewPack ? (
+          <View style={styles.reviewGate}>
+            <Text style={styles.reviewTitle}>Here's what we made. Edit anything.</Text>
+
+            {/* Affirmations Preview */}
+            <View style={styles.previewSection}>
+              <Text style={styles.previewLabel}>Affirmations (first 6)</Text>
+              {reviewPack.affirmations.slice(0, 6).map((aff, i) => (
+                <Text key={i} style={styles.previewAffirmation}>
+                  {i + 1}. {aff}
+                </Text>
+              ))}
+              {reviewPack.affirmations.length > 6 && (
+                <Text style={styles.previewMore}>
+                  + {reviewPack.affirmations.length - 6} more
+                </Text>
+              )}
+            </View>
+
+            {/* Audio Summary */}
+            <View style={styles.audioSummary}>
+              <View style={styles.audioChip}>
+                <Text style={styles.audioChipLabel}>Voice:</Text>
+                <Text style={styles.audioChipValue}>{reviewPack.audioSettings.voiceId}</Text>
+              </View>
+              <View style={styles.audioChip}>
+                <Text style={styles.audioChipLabel}>Brain layer:</Text>
+                <Text style={styles.audioChipValue}>
+                  {reviewPack.audioSettings.brainLayerType} {reviewPack.audioSettings.brainLayerPreset}
+                </Text>
+              </View>
+              <View style={styles.audioChip}>
+                <Text style={styles.audioChipLabel}>Background:</Text>
+                <Text style={styles.audioChipValue}>{reviewPack.audioSettings.backgroundId}</Text>
               </View>
             </View>
-          </LinearGradient>
-        </View>
 
-        {/* Beginner Sessions */}
-        {!isLoading && beginnerSessions.length > 0 && (
-          <View style={styles.section}>
-            <SectionHeader title="Beginner Affirmations" />
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.sessionScroll}
-            >
-              {beginnerSessions.slice(0, 4).map((session) => {
-                let shortTitle = session.title || "";
-                const titleUpper = shortTitle.toUpperCase();
-                if (titleUpper.includes("EASE IN")) shortTitle = "Ease In";
-                else if (titleUpper.includes("CALM DOWN")) shortTitle = "Calm Down";
-                else if (titleUpper.includes("HARD DAY")) shortTitle = "Hard Day";
-                else if (titleUpper.includes("NEXT RIGHT")) shortTitle = "Next Right Thing";
-                
-                return (
-                  <SessionTile
-                    key={session.id}
-                    sessionId={session.id}
-                    title={shortTitle}
-                    goalTag={session.goalTag}
-                    onPress={() => handleSessionPress(session.id)}
-                    variant="compact"
-                  />
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Did You Know? - Science Card */}
-        <View style={styles.section}>
-          <SectionHeader title="Did you know?" />
-          <View style={styles.scienceCardContainer}>
-            <ScienceCard data={scienceCard} variant="default" />
-          </View>
-        </View>
-
-        {/* Continue Practice */}
-        {continueSession && continueSessionDetails && continueProgress && (
-          <View style={styles.section}>
-            <SectionHeader title="Continue Practice" />
-            <View style={styles.continueCardContainer}>
-              <Card
-                variant="default"
-                onPress={handleContinuePress}
-                style={styles.continueCard}
+            <View style={styles.reviewActions}>
+              <Pressable
+                style={[styles.ctaButton, styles.ctaButtonSecondary]}
+                onPress={() => setReviewPack(null)}
               >
-                <View style={styles.continueContent}>
-                  <View style={styles.continueImageContainer}>
-                    <LinearGradient
-                      colors={theme.colors.gradients.accent}
-                      style={styles.continueImage}
-                    >
-                      <View style={styles.continueImageOverlay}>
-                        <MaterialIcons name="play-circle" size={24} color={theme.colors.text.primary} />
-                      </View>
-                    </LinearGradient>
-                  </View>
-                  <View style={styles.continueInfo}>
-                    <View style={styles.continueHeader}>
-                      <Text style={styles.continueTitle} numberOfLines={1}>
-                        {continueSessionDetails.title}
-                      </Text>
-                      {continueProgress.remainingMinutes > 0 && (
-                        <Text style={styles.continueTimeLeft}>
-                          {continueProgress.remainingMinutes}m left
-                        </Text>
-                      )}
-                    </View>
-                    <View style={styles.continueProgressBar}>
-                      <View 
-                        style={[
-                          styles.continueProgressFill,
-                          { width: `${continueProgress.progress * 100}%` }
-                        ]} 
-                      />
-                    </View>
-                  </View>
-                  <Pressable
-                    style={styles.continuePlayButton}
-                    onPress={handleContinuePress}
-                  >
-                    <MaterialIcons name="play-arrow" size={24} color={theme.colors.text.primary} />
-                  </Pressable>
-                </View>
-              </Card>
+                <Text style={[styles.ctaButtonText, styles.ctaButtonTextSecondary]}>EDIT</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.ctaButton, isGenerating && styles.ctaButtonDisabled]}
+                onPress={handleStartSession}
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <>
+                    <ActivityIndicator size="small" color="#ffffff" style={styles.buttonSpinner} />
+                    <Text style={styles.ctaButtonText}>STARTING…</Text>
+                  </>
+                ) : (
+                  <Text style={styles.ctaButtonText}>START SESSION</Text>
+                )}
+              </Pressable>
             </View>
           </View>
+        ) : (
+          /* Primary CTAs */
+          <View style={styles.ctaRow}>
+            <Pressable
+              style={[styles.ctaButton, !hasInput && styles.ctaButtonDisabled]}
+              onPress={handleQuickGenerate}
+              disabled={!hasInput || isGenerating}
+            >
+              {isGenerating ? (
+                <>
+                  <ActivityIndicator size="small" color="#ffffff" style={styles.buttonSpinner} />
+                  <Text style={styles.ctaButtonText}>GENERATING…</Text>
+                </>
+              ) : (
+                <Text style={styles.ctaButtonText}>QUICK GENERATE</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={[styles.ctaButton, styles.ctaButtonSecondary, !hasInput && styles.ctaButtonDisabled]}
+              onPress={handleCustomSession}
+              disabled={!hasInput || isGenerating}
+            >
+              <Text style={[styles.ctaButtonText, styles.ctaButtonTextSecondary]}>CUSTOM SESSION</Text>
+            </Pressable>
+          </View>
         )}
 
-        <View style={{ height: 160 }} />
+        {/* Continue Last Session */}
+        {!reviewPack && lastSession && lastSessionDetails && (
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>CONTINUE LAST SESSION</Text>
+            <Pressable style={styles.continueCard} onPress={handleContinueLastSession}>
+              <View style={styles.continueCardLeft}>
+                <View style={styles.continuePlayIcon}>
+                  <MaterialIcons name="play-arrow" size={24} color={theme.colors.text.primary} />
+                </View>
+              </View>
+              <View style={styles.continueCardContent}>
+                <Text style={styles.continuePrimaryText}>Continue</Text>
+                <Text style={styles.continueSecondaryText} numberOfLines={1}>
+                  {getLastSessionMetadata()}
+                </Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color={theme.colors.text.tertiary} />
+            </Pressable>
+          </View>
+        )}
+
+        {/* Recent Intentions */}
+        {!reviewPack && recentIntentions.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>RECENT INTENTIONS</Text>
+            {recentIntentions.slice(0, 5).map((intention) => (
+              <Pressable
+                key={intention.id}
+                style={styles.recentItem}
+                onPress={() => handleRecentIntentionPress(intention)}
+              >
+                <Text style={styles.recentItemText} numberOfLines={1}>
+                  {intention.text}
+                </Text>
+                <MaterialIcons name="chevron-right" size={20} color={theme.colors.text.tertiary} />
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        <View style={{ height: 100 }} />
       </ScrollView>
 
       {/* Mini Player */}
@@ -464,290 +515,295 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 100, // Reduced since tab bar is now persistent and handled by navigator
+    paddingBottom: 100,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: theme.spacing[6],
-    paddingBottom: theme.spacing[2],
-  },
-  headerLeft: {
-    flexDirection: "column",
-  },
-  headerGreeting: {
-    ...theme.typography.styles.h2,
-    fontSize: theme.typography.fontSize.xl,
-    color: theme.colors.text.primary,
-  },
-  headerSubtext: {
-    ...theme.typography.styles.caption,
-    color: theme.colors.text.tertiary,
-    marginTop: theme.spacing[1],
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  dayBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    borderRadius: theme.radius.full,
-    backgroundColor: "rgba(99, 102, 241, 0.2)",
-    borderWidth: 1,
-    borderColor: "rgba(129, 140, 248, 0.2)",
-  },
-  dayBadgeText: {
-    ...theme.typography.styles.caption,
-    color: theme.colors.text.secondary,
-    fontWeight: theme.typography.fontWeight.semibold,
-  },
-  heroQuestionContainer: {
     paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[6],
+    paddingTop: theme.spacing[12],
     paddingBottom: theme.spacing[6],
   },
-  heroQuestion: {
-    ...theme.typography.styles.sectionHeading,
-    textAlign: "center",
-    opacity: 0.9,
-    fontStyle: "italic",
-    // TODO: Use Lora serif font when custom fonts are implemented
-    // Design inspiration uses Lora italic for this text
+  headerTitle: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: 32,
+    fontWeight: "800",
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[2],
+    letterSpacing: -0.5,
   },
-  heroCardContainer: {
-    paddingHorizontal: theme.spacing[4],
-    marginBottom: theme.spacing[10],
+  headerSubtitle: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 16,
+    color: theme.colors.text.secondary,
+    lineHeight: 22,
   },
-  heroCardBackground: {
-    width: "100%",
-    aspectRatio: 4 / 5,
-    maxHeight: 520,
-    borderRadius: theme.radius["2xl"],
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-  },
-  heroCardContent: {
-    flex: 1,
-    padding: theme.spacing[6],
-    justifyContent: "space-between",
-  },
-  heroCardTop: {
-    justifyContent: "flex-start",
-    paddingTop: theme.spacing[2],
-    marginBottom: "auto",
-  },
-  heroCardInfo: {
-    flexDirection: "column",
-    gap: theme.spacing[2],
+  inputSection: {
+    paddingHorizontal: theme.spacing[6],
     marginBottom: theme.spacing[6],
   },
-  heroCardTitle: {
-    ...theme.typography.styles.cardTitle,
-  },
-  heroCardMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  heroCardMetaText: {
-    ...theme.typography.styles.metadata,
-  },
-  heroCardQuote: {
-    marginBottom: theme.spacing[8],
-    paddingLeft: 0,
-  },
-  heroCardQuoteText: {
-    ...theme.typography.styles.affirmationTitle,
-    fontStyle: "italic",
-    color: theme.colors.text.secondary,
-    textAlign: "center",
-  },
-  heroCardActions: {
-    flexDirection: "column",
-    gap: theme.spacing[4],
-  },
-  beginButton: {
-    width: "100%",
-  },
-  differentButton: {
-    flexDirection: "row",
-    width: "100%",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    opacity: 1,
-  },
-  differentButtonText: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
-  },
-  section: {
-    marginBottom: theme.spacing[10],
-  },
-  sessionScroll: {
-    paddingHorizontal: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
-    gap: theme.spacing[3],
-  },
-  programPromptContainer: {
-    paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[2],
-  },
-  programPromptCard: {
-    padding: theme.spacing[3],
-  },
-  programPromptContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  programPromptIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: theme.radius.md,
-    backgroundColor: "rgba(99, 102, 241, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  programPromptText: {
-    flex: 1,
-    gap: theme.spacing[0],
-  },
-  programPromptTitle: {
-    ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.sm,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.primary,
-  },
-  programPromptSubtitle: {
-    ...theme.typography.styles.caption,
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.text.tertiary,
-  },
-  sosContainer: {
-    paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[2],
-  },
-  sosCard: {
-    padding: theme.spacing[3],
-  },
-  sosContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-  },
-  sosIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: theme.radius.md,
-    backgroundColor: "rgba(239, 68, 68, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sosText: {
-    flex: 1,
-    gap: theme.spacing[0],
-  },
-  sosTitle: {
-    ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.sm,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.primary,
-  },
-  sosSubtitle: {
-    ...theme.typography.styles.caption,
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.text.tertiary,
-  },
-  scienceCardContainer: {
-    paddingHorizontal: theme.spacing[6],
-  },
-  continueCardContainer: {
-    paddingHorizontal: theme.spacing[6],
-  },
-  continueCard: {
-    padding: theme.spacing[4],
-  },
-  continueContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[4],
-  },
-  continueImageContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: theme.radius.full,
-    overflow: "hidden",
+  inputContainer: {
+    position: "relative",
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border.default,
+    minHeight: 100,
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
-  continueImage: {
-    width: "100%",
-    height: "100%",
+  input: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 16,
+    color: theme.colors.text.primary,
+    lineHeight: 22,
+    minHeight: 60,
+    textAlignVertical: "top",
+    paddingRight: 32, // Space for clear button
   },
-  continueImageOverlay: {
+  clearButton: {
     position: "absolute",
-    inset: 0,
-    flexDirection: "row",
+    top: theme.spacing[4],
+    right: theme.spacing[4],
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
   },
-  continueInfo: {
-    flex: 1,
-    minWidth: 0,
-    gap: theme.spacing[1],
-  },
-  continueHeader: {
+  inputHelper: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-end",
-    marginBottom: theme.spacing[1],
+    alignItems: "center",
+    marginTop: theme.spacing[2],
   },
-  continueTitle: {
-    ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.primary,
+  helperText: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 13,
+    color: theme.colors.text.tertiary,
     flex: 1,
   },
-  continueTimeLeft: {
-    ...theme.typography.styles.caption,
-    fontSize: theme.typography.fontSize.xs,
+  charCounter: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 13,
     color: theme.colors.text.tertiary,
     marginLeft: theme.spacing[2],
   },
-  continueProgressBar: {
-    width: "100%",
-    height: 6,
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
-    borderRadius: theme.radius.full,
-    overflow: "hidden",
+  charCounterWarning: {
+    color: "#ef4444",
   },
-  continueProgressFill: {
-    height: "100%",
+  ctaRow: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[6],
+    marginBottom: theme.spacing[8],
+  },
+  ctaButton: {
+    flex: 1,
+    height: 56,
     backgroundColor: theme.colors.accent.primary,
     borderRadius: theme.radius.full,
-  },
-  continuePlayButton: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.background.surface,
-    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  ctaButtonSecondary: {
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    borderColor: theme.colors.accent.primary,
+  },
+  ctaButtonDisabled: {
+    opacity: 0.4,
+  },
+  buttonSpinner: {
+    marginRight: theme.spacing[1],
+  },
+  ctaButtonText: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#ffffff",
+    letterSpacing: 0.5,
+  },
+  ctaButtonTextSecondary: {
+    color: theme.colors.accent.primary,
+  },
+  section: {
+    paddingHorizontal: theme.spacing[6],
+    marginBottom: theme.spacing[6],
+  },
+  sectionHeader: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 11,
+    color: theme.colors.text.secondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: theme.spacing[3],
+  },
+  continueCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing[4],
     borderWidth: 1,
     borderColor: theme.colors.border.default,
+    gap: theme.spacing[3],
+  },
+  continueCardLeft: {
+    marginRight: theme.spacing[2],
+  },
+  continuePlayIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.background.secondary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  continueCardContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  continuePrimaryText: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: 16,
+    fontWeight: "600",
+    color: theme.colors.text.primary,
+    marginBottom: 2,
+  },
+  continueSecondaryText: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 13,
+    color: theme.colors.text.tertiary,
+  },
+  recentItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.md,
+    marginBottom: theme.spacing[2],
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+  },
+  recentItemText: {
+    flex: 1,
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 15,
+    color: theme.colors.text.primary,
+    marginRight: theme.spacing[2],
+  },
+  countSection: {
+    paddingHorizontal: theme.spacing[6],
+    marginBottom: theme.spacing[6],
+  },
+  countLabel: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 14,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing[3],
+  },
+  countOptions: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  countOption: {
+    flex: 1,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+    backgroundColor: theme.colors.background.surfaceElevated,
+    alignItems: "center",
+  },
+  countOptionActive: {
+    borderColor: theme.colors.accent.primary,
+    backgroundColor: theme.colors.accent.primary + "20",
+  },
+  countOptionText: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 16,
+    color: theme.colors.text.secondary,
+  },
+  countOptionTextActive: {
+    color: theme.colors.text.primary,
+    fontWeight: "600",
+  },
+  reviewGate: {
+    paddingHorizontal: theme.spacing[6],
+    gap: theme.spacing[6],
+    marginBottom: theme.spacing[6],
+  },
+  reviewTitle: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: 20,
+    fontWeight: "600",
+    color: theme.colors.text.primary,
+    textAlign: "center",
+  },
+  previewSection: {
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing[4],
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+  },
+  previewLabel: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 13,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing[3],
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  previewAffirmation: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 14,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[2],
+    lineHeight: 20,
+  },
+  previewMore: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 12,
+    color: theme.colors.text.tertiary,
+    fontStyle: "italic",
+    marginTop: theme.spacing[2],
+  },
+  audioSummary: {
+    gap: theme.spacing[2],
+  },
+  audioChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.md,
+    padding: theme.spacing[3],
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+    gap: theme.spacing[2],
+  },
+  audioChipLabel: {
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 13,
+    color: theme.colors.text.secondary,
+  },
+  audioChipValue: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 13,
+    color: theme.colors.text.primary,
+    flex: 1,
+  },
+  reviewActions: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
   },
 });

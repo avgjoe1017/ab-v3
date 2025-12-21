@@ -56,6 +56,7 @@ app.post("/affirmations/generate", async (c) => {
       values: body.values || [],
       sessionType: body.sessionType || "Meditate",
       struggle: body.struggle,
+      goal: body.goal, // User's written goal for this specific session
       count: body.count || 4,
     };
 
@@ -315,7 +316,7 @@ app.post("/sessions", async (c) => {
     ownerUserId: session.ownerUserId,
     source: session.source,
     title: session.title,
-    goalTag: session.goalTag,
+    goalTag: session.goalTag ?? undefined, // Convert null to undefined for schema
     // durationSec: 0, // Removed or mapped to undefined if schema allows, but V3 Schema removed it so we omit
     affirmations: session.affirmations.map((a: { text: string }) => a.text),
     voiceId: session.voiceId,

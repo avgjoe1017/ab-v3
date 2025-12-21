@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, Image } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, Platform } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,11 +7,11 @@ import { apiGet, apiPost } from "../lib/api";
 import { PlaybackBundleVMSchema, type PlaybackBundleVM } from "@ab/contracts";
 import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
 import Slider from "@react-native-community/slider";
-import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation } from "../components";
+import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation, MicroVisualizer, LoudnessSparkline } from "../components";
 import { theme } from "../theme";
 import { useSleepTimer } from "../hooks/useSleepTimer";
 import { saveMixPreset } from "../storage/mixPresets";
-import { getSessionArtImage } from "../lib/sessionArt";
+import { getPlayerBackgroundGradient, getSessionGradient } from "../lib/sessionArt";
 
 // Helper to format time in MM:SS
 function formatTime(ms: number): string {
@@ -147,11 +147,55 @@ export default function PlayerScreen({ route, navigation }: any) {
     const needsLoad = isNewSession || isDifferentSession;
 
     if (needsLoad) {
-      engine.load(data).then(() => {
-        setLastLoadedSessionId(currentSessionId);
-      }).catch((error) => {
-        console.error("[PlayerScreen] ❌ Auto-load failed:", error);
-      });
+      // Resolve bundled assets (binaural/background) to local URIs for faster loading
+      (async () => {
+        try {
+          const { resolveBundledAsset } = await import("../lib/bundledAssets");
+          const resolvedData = {
+            ...data,
+            background: {
+              ...data.background,
+              urlByPlatform: {
+                ios: await resolveBundledAsset(
+                  Platform.OS === "ios" ? data.background.urlByPlatform.ios : data.background.urlByPlatform.android,
+                  "background"
+                ),
+                android: await resolveBundledAsset(
+                  Platform.OS === "android" ? data.background.urlByPlatform.android : data.background.urlByPlatform.ios,
+                  "background"
+                ),
+              },
+            },
+            binaural: {
+              ...data.binaural,
+              urlByPlatform: {
+                ios: await resolveBundledAsset(
+                  Platform.OS === "ios" ? data.binaural.urlByPlatform.ios : data.binaural.urlByPlatform.android,
+                  "binaural"
+                ),
+                android: await resolveBundledAsset(
+                  Platform.OS === "android" ? data.binaural.urlByPlatform.android : data.binaural.urlByPlatform.ios,
+                  "binaural"
+                ),
+              },
+            },
+          };
+          
+          engine.load(resolvedData).then(() => {
+            setLastLoadedSessionId(currentSessionId);
+          }).catch((error) => {
+            console.error("[PlayerScreen] ❌ Auto-load failed:", error);
+          });
+        } catch (resolveError) {
+          console.warn("[PlayerScreen] Failed to resolve bundled assets, using original URLs:", resolveError);
+          // Fallback to original bundle if resolution fails
+          engine.load(data).then(() => {
+            setLastLoadedSessionId(currentSessionId);
+          }).catch((error) => {
+            console.error("[PlayerScreen] ❌ Auto-load failed:", error);
+          });
+        }
+      })();
       return;
     }
     
@@ -179,8 +223,9 @@ export default function PlayerScreen({ route, navigation }: any) {
     ? `${frequencyHz}Hz`
     : null;
   
-  // Get placeholder image for blurred background
-  const sessionArtImage = getSessionArtImage(sessionId);
+  // Get gradient colors for background (based on session/goal)
+  const backgroundGradient = getPlayerBackgroundGradient(sessionId, sessionData?.goalTag);
+  const sessionGradient = getSessionGradient(sessionId, sessionData?.goalTag);
   
   const isPlaying = status === "playing";
   const isPreroll = status === "preroll";
@@ -211,7 +256,12 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   const handleEndSession = () => {
     engine.stop();
-    navigation.goBack();
+    // Check if we can go back, otherwise navigate to Home
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate("MainTabs", { screen: "Today" });
+    }
   };
 
   const handleSaveMix = async (name: string) => {
@@ -229,22 +279,35 @@ export default function PlayerScreen({ route, navigation }: any) {
 
   return (
     <View style={styles.screenContainer}>
-      {/* Blurred background image - outside SafeAreaView to fill entire screen */}
-      <Image
-        source={sessionArtImage}
-        style={styles.backgroundImage}
-        blurRadius={10}
-        resizeMode="cover"
-      />
-      {/* Dark overlay for better content visibility */}
-      <View style={styles.backgroundOverlay} />
+      {/* Gradient background - duotone style */}
+      <LinearGradient
+        colors={backgroundGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.backgroundGradient}
+      >
+        {/* Large decorative icon */}
+        <View style={styles.backgroundIconContainer}>
+          <MaterialIcons
+            name={sessionGradient.icon}
+            size={400}
+            color="rgba(255, 255, 255, 0.05)"
+          />
+        </View>
+      </LinearGradient>
       <AppScreen gradient={false} style={styles.appScreenOverlay}>
       <View style={styles.content}>
         {/* Top Navigation */}
         <View style={styles.topNav}>
           <IconButton
             icon="arrow-back"
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.navigate("MainTabs", { screen: "Today" });
+              }
+            }}
             variant="filled"
           />
           <View style={styles.topNavRight}>
@@ -300,20 +363,14 @@ export default function PlayerScreen({ route, navigation }: any) {
               )}
             </View>
 
-            {/* Audio Visualization */}
+            {/* Audio Visualization - Micro Visualizer */}
             <View style={styles.audioVizContainer}>
-              {barHeights.map((height, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.audioBar,
-                    { 
-                      height,
-                      backgroundColor: index < activeBars ? theme.colors.accent.highlight : "rgba(255, 255, 255, 0.3)"
-                    }
-                  ]}
-                />
-              ))}
+              <MicroVisualizer
+                barCount={30}
+                height={64}
+                color={theme.colors.accent.highlight}
+                isPlaying={isPlaying || isPreroll}
+              />
             </View>
 
             {/* Time Display */}
@@ -404,7 +461,15 @@ export default function PlayerScreen({ route, navigation }: any) {
                 <View style={styles.mixControl}>
                   <View style={styles.mixControlHeader}>
                     <Text style={styles.mixControlLabel}>Affirmations</Text>
-                    <Text style={styles.mixControlValue}>{Math.round(mix.affirmations * 100)}%</Text>
+                    <View style={styles.mixControlRight}>
+                      <LoudnessSparkline
+                        data={[12, 14, 13, 15, 14, 16, 15, 14, 13, 15]}
+                        width={50}
+                        height={16}
+                        color={theme.colors.accent.highlight}
+                      />
+                      <Text style={styles.mixControlValue}>{Math.round(mix.affirmations * 100)}%</Text>
+                    </View>
                   </View>
                   <Slider
                     style={styles.slider}
@@ -413,7 +478,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.affirmations * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, affirmations: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                    maximumTrackTintColor={theme.colors.border.default}
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
@@ -422,7 +487,15 @@ export default function PlayerScreen({ route, navigation }: any) {
                 <View style={styles.mixControl}>
                   <View style={styles.mixControlHeader}>
                     <Text style={styles.mixControlLabel}>Binaural Frequency</Text>
-                    <Text style={styles.mixControlValue}>{Math.round(mix.binaural * 100)}%</Text>
+                    <View style={styles.mixControlRight}>
+                      <LoudnessSparkline
+                        data={[10, 11, 10, 12, 11, 13, 12, 11, 10, 12]}
+                        width={50}
+                        height={16}
+                        color={theme.colors.accent.highlight}
+                      />
+                      <Text style={styles.mixControlValue}>{Math.round(mix.binaural * 100)}%</Text>
+                    </View>
                   </View>
                   <Slider
                     style={styles.slider}
@@ -431,7 +504,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.binaural * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, binaural: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                    maximumTrackTintColor={theme.colors.border.default}
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
@@ -440,7 +513,15 @@ export default function PlayerScreen({ route, navigation }: any) {
                 <View style={styles.mixControl}>
                   <View style={styles.mixControlHeader}>
                     <Text style={styles.mixControlLabel}>Atmosphere</Text>
-                    <Text style={styles.mixControlValue}>{Math.round(mix.background * 100)}%</Text>
+                    <View style={styles.mixControlRight}>
+                      <LoudnessSparkline
+                        data={[8, 9, 8, 10, 9, 11, 10, 9, 8, 10]}
+                        width={50}
+                        height={16}
+                        color={theme.colors.accent.highlight}
+                      />
+                      <Text style={styles.mixControlValue}>{Math.round(mix.background * 100)}%</Text>
+                    </View>
                   </View>
                   <Slider
                     style={styles.slider}
@@ -449,7 +530,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.background * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, background: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(255, 255, 255, 0.3)"
+                    maximumTrackTintColor={theme.colors.border.default}
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
@@ -500,18 +581,14 @@ const styles = StyleSheet.create({
   appScreenOverlay: {
     backgroundColor: "transparent",
   },
-  backgroundImage: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: "100%",
-    height: "100%",
-  },
-  backgroundOverlay: {
+  backgroundGradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(15, 23, 42, 0.65)", // Dark overlay for content readability
+  },
+  backgroundIconContainer: {
+    position: "absolute",
+    top: -50,
+    right: -100,
+    opacity: 0.8,
   },
   content: {
     flex: 1,
@@ -557,17 +634,29 @@ const styles = StyleSheet.create({
     padding: theme.spacing[6],
     marginBottom: theme.spacing[4],
     borderWidth: 1,
-    borderColor: theme.colors.border.strong,
+    borderColor: theme.colors.border.glass,
+    // Soft frosted glass effect
+    ...theme.shadows.glass,
   },
   mainCardHeader: {
     marginBottom: theme.spacing[6],
   },
   sessionTitle: {
-    ...theme.typography.styles.affirmationTitle,
+    fontFamily: theme.typography.fontFamily.semibold,
+    fontSize: 28,
+    fontWeight: "600",
+    lineHeight: 34,
+    letterSpacing: -0.3,
+    color: theme.colors.text.primary,
     marginBottom: theme.spacing[1],
   },
   sessionSubtitle: {
-    ...theme.typography.styles.metadata,
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 13,
+    fontWeight: "400",
+    lineHeight: 18,
+    letterSpacing: 0.1,
+    color: theme.colors.text.tertiary,
   },
   audioVizContainer: {
     flexDirection: "row",
@@ -610,7 +699,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-around",
     borderWidth: 1,
-    borderColor: theme.colors.border.strong,
+    borderColor: theme.colors.border.glass,
+    // Soft frosted glass effect
+    ...theme.shadows.glass,
   },
   controlButton: {
     padding: theme.spacing[4],
@@ -633,10 +724,13 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.xl,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    borderColor: theme.colors.border.glass,
+    // Soft frosted glass effect
+    ...theme.shadows.glass,
   },
   mixPanelOpen: {
     backgroundColor: theme.colors.background.surfaceElevated,
+    borderColor: "rgba(255, 255, 255, 0.6)",
   },
   mixPanelHeader: {
     width: "100%",
@@ -668,6 +762,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  mixControlRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   mixControlLabel: {
     ...theme.typography.styles.body,

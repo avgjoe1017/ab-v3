@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { theme } from "../theme/tokens";
 
-export type TabRoute = "Today" | "Explore" | "Programs" | "Library";
+export type TabRoute = "Today" | "Explore" | "Library";
 
 interface BottomTabsProps {
   activeRoute: TabRoute;
@@ -18,10 +18,9 @@ interface TabItem {
 }
 
 const TABS: TabItem[] = [
-  { route: "Today", icon: "calendar-today", label: "Today" },
+  { route: "Today", icon: "auto-awesome", label: "Home" },
   { route: "Explore", icon: "explore", label: "Explore" },
-  { route: "Programs", icon: "book", label: "Programs" },
-  { route: "Library", icon: "library-music", label: "Library" },
+  { route: "Library", icon: "library-music", label: "My Library" },
 ];
 
 /**
@@ -75,9 +74,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 85,
-    backgroundColor: "rgba(15, 23, 42, 0.95)",
+    backgroundColor: theme.colors.background.surfaceElevated,
     borderTopWidth: 1,
-    borderTopColor: theme.colors.border.subtle,
+    borderTopColor: theme.colors.border.default,
     paddingBottom: theme.spacing[6],
     paddingTop: theme.spacing[2],
     paddingHorizontal: theme.spacing[6],

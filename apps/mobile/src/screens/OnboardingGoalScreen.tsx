@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ViewStyle } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { AppScreen, PrimaryButton, Card } from "../components";
+import { AppScreen, PrimaryButton, DuotoneCard, type DuotonePalette } from "../components";
 import { theme } from "../theme";
 import type { OnboardingGoal } from "../storage/onboarding";
 
@@ -15,35 +15,35 @@ const GOALS: Array<{
   title: string;
   description: string;
   icon: keyof typeof MaterialIcons.glyphMap;
-  color: string;
+  palette: DuotonePalette;
 }> = [
   {
     id: "sleep",
     title: "Sleep",
     description: "Rest deeply and wake refreshed",
     icon: "bedtime",
-    color: "#3b82f6",
+    palette: "twilight",
   },
   {
     id: "focus",
     title: "Focus",
     description: "Sharpen your concentration",
     icon: "psychology",
-    color: "#a855f7",
+    palette: "lavender",
   },
   {
     id: "calm",
     title: "Calm",
     description: "Find peace in the moment",
     icon: "self-improvement",
-    color: "#14b8a6",
+    palette: "sage",
   },
   {
     id: "confidence",
     title: "Confidence",
     description: "Build unshakeable self-belief",
     icon: "bolt",
-    color: "#f97316",
+    palette: "honey",
   },
 ];
 
@@ -70,30 +70,29 @@ export default function OnboardingGoalScreen({ onNext, onSkip }: OnboardingGoalS
           {GOALS.map((goal) => {
             const isSelected = selectedGoal === goal.id;
             return (
-              <Pressable
-                key={goal.id}
-                onPress={() => setSelectedGoal(goal.id)}
-                style={styles.goalPressable}
-              >
-                <Card
-                  variant={isSelected ? "elevated" : "default"}
-                  style={StyleSheet.flatten([
-                    styles.goalCard,
-                    isSelected && { borderColor: goal.color, borderWidth: 2 },
-                  ]) as ViewStyle}
+              <View key={goal.id} style={styles.goalWrapper}>
+                <DuotoneCard
+                  title={goal.title}
+                  subtitle={goal.description}
+                  icon={goal.icon}
+                  palette={goal.palette}
+                  height={130}
+                  onPress={() => setSelectedGoal(goal.id)}
+                  style={isSelected ? styles.goalSelected : undefined}
                 >
-                  <View style={[styles.goalIconContainer, { backgroundColor: `${goal.color}20` }]}>
-                    <MaterialIcons name={goal.icon} size={32} color={goal.color} />
+                  <View style={styles.goalCardContent}>
+                    <View style={styles.goalCardInfo}>
+                      <Text style={styles.goalCardTitle}>{goal.title}</Text>
+                      <Text style={styles.goalCardDescription}>{goal.description}</Text>
+                    </View>
+                    {isSelected && (
+                      <View style={styles.goalCheck}>
+                        <MaterialIcons name="check-circle" size={24} color="#ffffff" />
+                      </View>
+                    )}
                   </View>
-                  <View style={styles.goalContent}>
-                    <Text style={styles.goalTitle}>{goal.title}</Text>
-                    <Text style={styles.goalDescription}>{goal.description}</Text>
-                  </View>
-                  {isSelected && (
-                    <MaterialIcons name="check-circle" size={24} color={goal.color} />
-                  )}
-                </Card>
-              </Pressable>
+                </DuotoneCard>
+              </View>
             );
           })}
         </View>
@@ -145,37 +144,45 @@ const styles = StyleSheet.create({
   },
   goalsGrid: {
     paddingHorizontal: theme.spacing[6],
-    gap: theme.spacing[4],
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[3],
     paddingBottom: theme.spacing[6],
   },
-  goalPressable: {
-    width: "100%",
+  goalWrapper: {
+    width: "48%",
+    minWidth: 150,
   },
-  goalCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[4],
-    padding: theme.spacing[4],
+  goalSelected: {
+    borderWidth: 3,
+    borderColor: "rgba(255, 255, 255, 0.8)",
   },
-  goalIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: theme.radius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  goalContent: {
+  goalCardContent: {
     flex: 1,
+    justifyContent: "flex-end",
+  },
+  goalCardInfo: {
     gap: theme.spacing[1],
   },
-  goalTitle: {
-    ...theme.typography.styles.h3,
+  goalCardTitle: {
+    fontFamily: theme.typography.fontFamily.semibold,
     fontSize: theme.typography.fontSize.lg,
-    color: theme.colors.text.primary,
+    fontWeight: "600",
+    color: "#ffffff",
+    textShadowColor: "rgba(0, 0, 0, 0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
-  goalDescription: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
+  goalCardDescription: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: theme.typography.fontSize.xs,
+    color: "rgba(255, 255, 255, 0.85)",
+    lineHeight: 16,
+  },
+  goalCheck: {
+    position: "absolute",
+    top: 0,
+    right: 0,
   },
   actions: {
     paddingHorizontal: theme.spacing[6],

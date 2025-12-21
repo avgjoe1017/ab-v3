@@ -66,10 +66,12 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.full,
   },
   buttonFilled: {
-    backgroundColor: theme.colors.background.surface,
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderWidth: 1,
+    borderColor: theme.colors.border.glass,
   },
   buttonSubtle: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    backgroundColor: theme.colors.background.surfaceSubtle,
   },
   buttonPressed: {
     opacity: 0.7,

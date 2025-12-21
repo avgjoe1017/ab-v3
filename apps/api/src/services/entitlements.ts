@@ -1,9 +1,10 @@
 import { prisma } from "../lib/db";
 import { type EntitlementV3 } from "@ab/contracts";
 import { getRevenueCatSubscription, hasProSubscription } from "./revenuecat";
+import { isDevelopment } from "../lib/config";
 
 const FREE_TIER_LIMITS = {
-    dailyGenerations: 2,
+    dailyGenerations: isDevelopment() ? Number.MAX_SAFE_INTEGER : 2, // Unlimited in dev, 2 in production
     maxSessionLengthSec: Number.MAX_SAFE_INTEGER, // Infinite for V3 Loop
 };
 

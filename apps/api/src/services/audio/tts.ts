@@ -162,6 +162,7 @@ function mapVoiceIdToOpenAI(voiceId: string): string {
 /**
  * Generate TTS audio using ElevenLabs API
  * ElevenLabs provides highly realistic voices with emotional control
+ * Configured for slow, meditative, calming, ASMR-like delivery
  */
 async function generateElevenLabsTTS(
   options: TTSOptions,
@@ -175,11 +176,13 @@ async function generateElevenLabsTTS(
   // Map voiceId to ElevenLabs voice ID
   const voiceId = mapVoiceIdToElevenLabs(options.voiceId);
   
-  // Adjust stability and similarity for prosody variation
-  // Variant 1: More stable, consistent
-  // Variant 2: Slightly less stable for variation
-  const stability = options.variant === 1 ? 0.5 : 0.45;
-  const similarityBoost = options.variant === 1 ? 0.75 : 0.7;
+  // Meditative/ASMR settings: Lower stability = slower, more deliberate delivery
+  // Lower similarity_boost = softer, more relaxed tone
+  // These settings create a calming, ASMR-like quality with slower pacing
+  // Variant 1: Slightly more stable for consistency
+  // Variant 2: Slightly less stable for natural prosody variation
+  const stability = options.variant === 1 ? 0.35 : 0.3;
+  const similarityBoost = options.variant === 1 ? 0.6 : 0.55;
 
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -216,24 +219,25 @@ async function generateElevenLabsTTS(
 
 /**
  * Map voiceId to ElevenLabs voice ID
- * Default to calm, neutral voices
+ * Uses free tier default voices for meditative, calming delivery
  */
 function mapVoiceIdToElevenLabs(voiceId: string): string {
-  // ElevenLabs voice IDs (calm, neutral voices)
-  // Map common voice names to ElevenLabs voice IDs
+  // ElevenLabs free tier default voices (meditative, calming, ASMR-like)
+  // MALE default: xGDJhCwcqw94ypljc95Z
+  // FEMALE default: KGZeK6FsnWQdrkDHnDNA
   const voiceMap: Record<string, string> = {
-    "default": "21m00Tcm4TlvDq8ikWAM", // Rachel - calm, neutral
-    "male": "pNInz6obpgDQGcFmaJgB", // Adam - calm, neutral
-    "female": "21m00Tcm4TlvDq8ikWAM", // Rachel
-    "alloy": "pNInz6obpgDQGcFmaJgB", // Adam - calm, steady
-    "onyx": "pNInz6obpgDQGcFmaJgB", // Adam - strong, confident
-    "shimmer": "21m00Tcm4TlvDq8ikWAM", // Rachel - gentle, supportive
-    "nova": "21m00Tcm4TlvDq8ikWAM", // Rachel
-    "echo": "pNInz6obpgDQGcFmaJgB", // Adam
-    "fable": "21m00Tcm4TlvDq8ikWAM", // Rachel
+    "default": "KGZeK6FsnWQdrkDHnDNA", // Female default - free tier
+    "male": "xGDJhCwcqw94ypljc95Z", // Male default - free tier
+    "female": "KGZeK6FsnWQdrkDHnDNA", // Female default - free tier
+    "alloy": "xGDJhCwcqw94ypljc95Z", // Male - calm, steady
+    "onyx": "xGDJhCwcqw94ypljc95Z", // Male - strong, confident
+    "shimmer": "KGZeK6FsnWQdrkDHnDNA", // Female - gentle, supportive
+    "nova": "KGZeK6FsnWQdrkDHnDNA", // Female
+    "echo": "xGDJhCwcqw94ypljc95Z", // Male
+    "fable": "KGZeK6FsnWQdrkDHnDNA", // Female
   };
 
-  return voiceMap[voiceId.toLowerCase()] || "21m00Tcm4TlvDq8ikWAM";
+  return voiceMap[voiceId.toLowerCase()] || "KGZeK6FsnWQdrkDHnDNA";
 }
 
 /**

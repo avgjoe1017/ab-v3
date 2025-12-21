@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs-extra";
 import { STORAGE_PUBLIC_BASE_URL, ASSETS_PUBLIC_BASE_URL } from "../../index";
-import { isS3Configured, getS3Config } from "../storage/s3";
+import { isS3Configured, getS3Config, fileExistsInS3 } from "../storage/s3";
 
 /**
  * V3 Compliance: Resolve binaural and background assets from AudioAsset table or constants.
@@ -49,11 +49,30 @@ export async function getBinauralAsset(
 }> {
     // For iOS, prefer S3 URL (HTTPS) to avoid ATS issues
     const s3Key = `audio/binaural/alpha_${hz}hz_400_3min.m4a`;
-    const s3Url = getS3AssetUrl(s3Key);
+    let s3Url: string | null = null;
+    let actualHz = hz;
     
-    // Fallback S3 URL for 10Hz if exact match might not exist
-    const fallbackS3Key = "audio/binaural/alpha_10hz_400_3min.m4a";
-    const fallbackS3Url = getS3AssetUrl(fallbackS3Key);
+    // Check if the exact frequency file exists in S3
+    if (isS3Configured()) {
+      const exists = await fileExistsInS3(s3Key);
+      if (exists) {
+        s3Url = getS3AssetUrl(s3Key);
+      } else {
+        // Try fallback frequencies in order: 10Hz (Alpha), 7Hz (Theta), 13.5Hz (SMR), 3Hz (Delta)
+        const fallbackFrequencies = [10, 7, 13.5, 3];
+        for (const fallbackHz of fallbackFrequencies) {
+          if (fallbackHz === hz) continue; // Skip the one we already checked
+          const fallbackS3Key = `audio/binaural/alpha_${fallbackHz}hz_400_3min.m4a`;
+          const fallbackExists = await fileExistsInS3(fallbackS3Key);
+          if (fallbackExists) {
+            s3Url = getS3AssetUrl(fallbackS3Key);
+            actualHz = fallbackHz;
+            console.log(`[Assets] Using fallback binaural: ${fallbackHz}Hz (requested: ${hz}Hz doesn't exist)`);
+            break;
+          }
+        }
+      }
+    }
     
     // For Android, use local HTTP URL
     const assetPath = path.resolve(PROJECT_ROOT, "assets", "audio", "binaural", `alpha_${hz}hz_400_3min.m4a`);
@@ -88,14 +107,15 @@ export async function getBinauralAsset(
         }
     }
     
-    // iOS gets S3 URL (HTTPS), Android gets local URL (HTTP)
-    const iosUrl = s3Url || fallbackS3Url || localUrl;
+    // iOS gets S3 URL (HTTPS) if available, otherwise local URL
+    // Android gets local URL (HTTP)
+    const iosUrl = s3Url || localUrl;
     const androidUrl = localUrl;
     
     return {
         urlByPlatform: { ios: iosUrl, android: androidUrl },
         loop: true,
-        hz,
+        hz: actualHz, // Return the actual Hz used (may be fallback)
     };
 }
 

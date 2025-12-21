@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ViewStyle } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { AppScreen, PrimaryButton, Card } from "../components";
+import { AppScreen, PrimaryButton, DuotoneCard, type DuotonePalette } from "../components";
 import { theme } from "../theme";
 import type { OnboardingVoice } from "../storage/onboarding";
 
@@ -16,35 +16,35 @@ const VOICES: Array<{
   name: string;
   description: string;
   icon: keyof typeof MaterialIcons.glyphMap;
-  color: string;
+  palette: DuotonePalette;
 }> = [
   {
     id: "shimmer",
     name: "Shimmer",
     description: "Warm and gentle",
     icon: "record-voice-over",
-    color: "#a855f7",
+    palette: "lavender",
   },
   {
     id: "onyx",
     name: "Onyx",
     description: "Deep and calming",
     icon: "record-voice-over",
-    color: "#6366f1",
+    palette: "twilight",
   },
   {
     id: "nova",
     name: "Nova",
     description: "Bright and clear",
     icon: "record-voice-over",
-    color: "#f97316",
+    palette: "honey",
   },
   {
     id: "echo",
     name: "Echo",
     description: "Soft and soothing",
     icon: "record-voice-over",
-    color: "#14b8a6",
+    palette: "sage",
   },
 ];
 
@@ -73,48 +73,46 @@ export default function OnboardingVoiceScreen({ onNext, onSkip }: OnboardingVoic
           </Text>
         </View>
 
-        {/* Voices List */}
-        <View style={styles.voicesList}>
+        {/* Voices Grid */}
+        <View style={styles.voicesGrid}>
           {VOICES.map((voice) => {
             const isSelected = selectedVoice === voice.id;
             const isPlaying = playingVoice === voice.id;
             return (
-              <Pressable
-                key={voice.id}
-                onPress={() => setSelectedVoice(voice.id)}
-                style={styles.voicePressable}
-              >
-                <Card
-                  variant={isSelected ? "elevated" : "default"}
-                  style={StyleSheet.flatten([
-                    styles.voiceCard,
-                    isSelected && { borderColor: voice.color, borderWidth: 2 },
-                  ]) as ViewStyle}
+              <View key={voice.id} style={styles.voiceWrapper}>
+                <DuotoneCard
+                  title={voice.name}
+                  subtitle={voice.description}
+                  icon={voice.icon}
+                  palette={voice.palette}
+                  height={120}
+                  onPress={() => setSelectedVoice(voice.id)}
+                  style={isSelected ? styles.voiceSelected : undefined}
                 >
-                  <View style={styles.voiceLeft}>
+                  <View style={styles.voiceCardContent}>
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
                         handlePlaySample(voice.id);
                       }}
-                      style={[styles.playButton, { backgroundColor: `${voice.color}20` }]}
+                      style={styles.voicePlayButton}
                     >
                       <MaterialIcons
                         name={isPlaying ? "pause" : "play-arrow"}
-                        size={24}
-                        color={voice.color}
+                        size={20}
+                        color="#ffffff"
                       />
                     </Pressable>
-                    <View style={styles.voiceContent}>
-                      <Text style={styles.voiceName}>{voice.name}</Text>
-                      <Text style={styles.voiceDescription}>{voice.description}</Text>
+                    <View style={styles.voiceCardInfo}>
+                      <Text style={styles.voiceCardName}>{voice.name}</Text>
+                      <Text style={styles.voiceCardDescription}>{voice.description}</Text>
                     </View>
+                    {isSelected && (
+                      <MaterialIcons name="check-circle" size={22} color="#ffffff" />
+                    )}
                   </View>
-                  {isSelected && (
-                    <MaterialIcons name="check-circle" size={24} color={voice.color} />
-                  )}
-                </Card>
-              </Pressable>
+                </DuotoneCard>
+              </View>
             );
           })}
         </View>
@@ -164,45 +162,52 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: theme.typography.lineHeight.relaxed,
   },
-  voicesList: {
+  voicesGrid: {
     paddingHorizontal: theme.spacing[6],
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: theme.spacing[3],
     paddingBottom: theme.spacing[6],
   },
-  voicePressable: {
-    width: "100%",
+  voiceWrapper: {
+    width: "48%",
+    minWidth: 150,
   },
-  voiceCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: theme.spacing[4],
+  voiceSelected: {
+    borderWidth: 3,
+    borderColor: "rgba(255, 255, 255, 0.8)",
   },
-  voiceLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[4],
+  voiceCardContent: {
     flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: theme.spacing[3],
   },
-  playButton: {
-    width: 48,
-    height: 48,
+  voicePlayButton: {
+    width: 36,
+    height: 36,
     borderRadius: theme.radius.full,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
     alignItems: "center",
     justifyContent: "center",
   },
-  voiceContent: {
+  voiceCardInfo: {
     flex: 1,
     gap: theme.spacing[0],
   },
-  voiceName: {
-    ...theme.typography.styles.h3,
+  voiceCardName: {
+    fontFamily: theme.typography.fontFamily.semibold,
     fontSize: theme.typography.fontSize.md,
-    color: theme.colors.text.primary,
+    fontWeight: "600",
+    color: "#ffffff",
+    textShadowColor: "rgba(0, 0, 0, 0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
-  voiceDescription: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
+  voiceCardDescription: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: theme.typography.fontSize.xs,
+    color: "rgba(255, 255, 255, 0.85)",
   },
   actions: {
     paddingHorizontal: theme.spacing[6],

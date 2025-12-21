@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet, Image } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
 import { apiGet } from "../lib/api";
 import { theme } from "../theme/tokens";
-import { getSessionArtImage } from "../lib/sessionArt";
+import { getSessionGradient } from "../lib/sessionArt";
 
 interface MiniPlayerProps {
   onPress?: () => void;
@@ -17,6 +17,7 @@ interface MiniPlayerProps {
  * MiniPlayer - Global mini player component
  * Displays current session and playback controls
  * Appears when a session is active, hidden when idle
+ * Now uses DuotoneCard-style gradients instead of images
  */
 export const MiniPlayer: React.FC<MiniPlayerProps> = ({ onPress, sessionId }) => {
   const engine = useMemo(() => getAudioEngine(), []);
@@ -47,9 +48,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ onPress, sessionId }) =>
   }
 
   const sessionTitle = session?.title || "Session";
+  const sessionGoalTag = session?.goalTag || null;
   
-  // Get placeholder image for session art
-  const sessionArtImage = getSessionArtImage(activeSessionId);
+  // Get gradient configuration for session art
+  const sessionGradient = getSessionGradient(activeSessionId, sessionGoalTag);
 
   const handlePlayPause = () => {
     if (isPlaying || isPreroll) {
@@ -68,11 +70,20 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ onPress, sessionId }) =>
       onPress={onPress}
     >
       <View style={styles.content}>
-        <Image
-          source={sessionArtImage}
-          style={styles.image}
-          resizeMode="cover"
-        />
+        <View style={styles.iconContainer}>
+          <LinearGradient
+            colors={sessionGradient.colors}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.iconGradient}
+          >
+            <MaterialIcons
+              name={sessionGradient.icon}
+              size={22}
+              color="#fff"
+            />
+          </LinearGradient>
+        </View>
         <View style={styles.textContainer}>
           <Text style={styles.title} numberOfLines={1}>
             {sessionTitle}
@@ -121,16 +132,15 @@ const styles = StyleSheet.create({
     left: theme.spacing[4],
     right: theme.spacing[4],
     height: 64,
-    backgroundColor: "rgba(30, 27, 75, 0.95)",
+    backgroundColor: theme.colors.background.surfaceElevated,
     borderRadius: theme.radius.full,
     borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    borderColor: theme.colors.border.glass,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: theme.spacing[4],
     justifyContent: "space-between",
-    ...theme.shadows.ios.md,
-    ...theme.shadows.android.md,
+    ...theme.shadows.glass,
   },
   pressed: {
     opacity: 0.9,
@@ -142,13 +152,16 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  image: {
+  iconContainer: {
     width: 40,
     height: 40,
     borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-    backgroundColor: theme.colors.background.secondary,
+    overflow: "hidden",
+  },
+  iconGradient: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   textContainer: {
     flex: 1,
@@ -190,4 +203,3 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
-

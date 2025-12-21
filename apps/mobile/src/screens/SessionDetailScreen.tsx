@@ -4,7 +4,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { SessionV3Schema, type SessionV3 } from "@ab/contracts";
-import { AppScreen, IconButton, SectionHeader, PrimaryButton, Chip, Card } from "../components";
+import { AppScreen, IconButton, SectionHeader, PrimaryButton, Chip, Card, WhatsInsideGlassCard, DuotoneCard, type DuotonePalette } from "../components";
 import { theme } from "../theme";
 import { toggleSavedSession, isSessionSaved } from "../storage/savedSessions";
 import { getFrequencyExplanation } from "../lib/science";
@@ -149,32 +149,34 @@ export default function SessionDetailScreen({ route, navigation }: any) {
           </View>
         </View>
 
-        {/* What's Inside */}
+        {/* What's Inside - Glass Card */}
         <View style={styles.section}>
           <SectionHeader title="What's Inside" />
-          <Card variant="default" style={styles.insideCard}>
-            <View style={styles.insideItem}>
-              <MaterialIcons name="record-voice-over" size={24} color={theme.colors.accent.primary} />
-              <View style={styles.insideItemContent}>
-                <Text style={styles.insideItemLabel}>Voice</Text>
-                <Text style={styles.insideItemValue}>{voiceName}</Text>
-              </View>
-            </View>
-            <View style={styles.insideItem}>
-              <MaterialIcons name="waves" size={24} color={theme.colors.accent.secondary} />
-              <View style={styles.insideItemContent}>
-                <Text style={styles.insideItemLabel}>Binaural Beats</Text>
-                <Text style={styles.insideItemValue}>{binauralHz}</Text>
-              </View>
-            </View>
-            <View style={styles.insideItem}>
-              <MaterialIcons name="nature" size={24} color={theme.colors.semantic.success} />
-              <View style={styles.insideItemContent}>
-                <Text style={styles.insideItemLabel}>Atmosphere</Text>
-                <Text style={styles.insideItemValue}>{backgroundName}</Text>
-              </View>
-            </View>
-          </Card>
+          <WhatsInsideGlassCard
+            components={[
+              {
+                type: "voice",
+                name: "Voice",
+                value: voiceName,
+                icon: "record-voice-over",
+                color: theme.colors.accent.primary,
+              },
+              {
+                type: "binaural",
+                name: "Binaural Beats",
+                value: binauralHz,
+                icon: "waves",
+                color: theme.colors.accent.secondary,
+              },
+              {
+                type: "atmosphere",
+                name: "Atmosphere",
+                value: backgroundName,
+                icon: "nature",
+                color: theme.colors.semantic.success,
+              },
+            ]}
+          />
         </View>
 
         {/* Why This Works - Frequency Explanation */}
@@ -226,21 +228,17 @@ export default function SessionDetailScreen({ route, navigation }: any) {
               contentContainerStyle={styles.relatedScroll}
             >
               {relatedSessions.map((related) => (
-                <Card
-                  key={related.id}
-                  variant="surface"
-                  onPress={() => handleRelatedSessionPress(related.id)}
-                  style={styles.relatedCard}
-                >
-                  <View style={styles.relatedCardContent}>
-                    <Text style={styles.relatedCardTitle} numberOfLines={2}>
-                      {related.title}
-                    </Text>
-                    {related.goalTag && (
-                      <Text style={styles.relatedCardTag}>{formatGoalTag(related.goalTag)}</Text>
-                    )}
-                  </View>
-                </Card>
+                <View key={related.id} style={styles.relatedCardWrapper}>
+                  <DuotoneCard
+                    title={related.title}
+                    subtitle={formatGoalTag(related.goalTag || "")}
+                    icon={getIconForGoalTag(related.goalTag)}
+                    palette={getPaletteForGoalTag(related.goalTag)}
+                    height={120}
+                    showArrow
+                    onPress={() => handleRelatedSessionPress(related.id)}
+                  />
+                </View>
               ))}
             </ScrollView>
           </View>
@@ -283,6 +281,32 @@ function formatVoiceId(voiceId: string): string {
     alloy: "Alloy",
   };
   return voiceMap[voiceId] || voiceId.charAt(0).toUpperCase() + voiceId.slice(1);
+}
+
+function getPaletteForGoalTag(goalTag?: string): DuotonePalette {
+  switch (goalTag?.toLowerCase()) {
+    case "sleep": return "twilight";
+    case "focus": return "lavender";
+    case "calm": return "sage";
+    case "confidence": return "honey";
+    case "anxiety": return "sky";
+    case "resilience": return "rose";
+    case "productivity": return "lavender";
+    default: return "mist";
+  }
+}
+
+function getIconForGoalTag(goalTag?: string): keyof typeof MaterialIcons.glyphMap {
+  switch (goalTag?.toLowerCase()) {
+    case "sleep": return "bedtime";
+    case "focus": return "psychology";
+    case "calm": return "self-improvement";
+    case "confidence": return "bolt";
+    case "anxiety": return "spa";
+    case "resilience": return "fitness-center";
+    case "productivity": return "trending-up";
+    default: return "auto-awesome";
+  }
 }
 
 const styles = StyleSheet.create({
@@ -390,22 +414,8 @@ const styles = StyleSheet.create({
     gap: theme.spacing[3],
     paddingRight: theme.spacing[6],
   },
-  relatedCard: {
-    width: 160,
-    padding: theme.spacing[4],
-  },
-  relatedCardContent: {
-    gap: theme.spacing[2],
-  },
-  relatedCardTitle: {
-    ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.text.primary,
-  },
-  relatedCardTag: {
-    ...theme.typography.styles.caption,
-    color: theme.colors.text.tertiary,
+  relatedCardWrapper: {
+    width: 180,
   },
   actionContainer: {
     paddingHorizontal: theme.spacing[6],

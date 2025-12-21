@@ -21,7 +21,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   return (
     <View style={[styles.container, style]}>
       <Text style={styles.title}>{title}</Text>
-      {actionLabel && onActionPress && (
+      {actionLabel && (
         <Pressable onPress={onActionPress}>
           <Text style={styles.action}>{actionLabel}</Text>
         </Pressable>
@@ -35,15 +35,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: theme.spacing[4],
-    paddingHorizontal: theme.spacing[6],
+    marginBottom: theme.spacing[3],
   },
   title: {
-    ...theme.typography.styles.sectionHeading,
+    fontFamily: theme.typography.fontFamily.semibold,
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#212529",
   },
   action: {
-    ...theme.typography.styles.metadata,
-    color: theme.colors.accent.primary,
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: 14,
+    color: "#212529",
+    textDecorationLine: "underline",
   },
 });
-

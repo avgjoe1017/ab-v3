@@ -1,18 +1,32 @@
 # Fix "Port 8787 in Use" Error
 
-## Quick Fix
+## Quick Fix (Recommended)
 
-The error means the API server is already running in another terminal. You have two options:
+### Use the Helper Script
 
-### Option 1: Stop the Existing Server (Recommended)
+**Option 1: Automatic Startup Script (Best)**
+```powershell
+# This script automatically kills any process on port 8787 before starting
+powershell -ExecutionPolicy Bypass -File apps/api/start-dev.ps1
+```
 
+**Option 2: Kill Port Manually**
+```powershell
+# Run this script to kill any process using port 8787
+powershell -ExecutionPolicy Bypass -File apps/api/kill-port.ps1
+
+# Then start the server normally
+pnpm -C apps/api dev
+```
+
+### Manual Options
+
+**Option 3: Stop the Existing Server**
 1. **Find the terminal** where you started the API server (`pnpm -C apps/api dev`)
 2. **Press `Ctrl+C`** to stop it
 3. **Restart** the API server
 
-### Option 2: Kill the Process
-
-If you can't find the terminal, kill the process:
+**Option 4: Kill the Process Manually**
 
 **PowerShell:**
 ```powershell
@@ -34,7 +48,7 @@ if ($process) {
 3. Find "bun.exe" process
 4. Right-click → End Task
 
-### Option 3: Use a Different Port
+### Option 5: Use a Different Port
 
 If you want to run multiple instances, change the port:
 

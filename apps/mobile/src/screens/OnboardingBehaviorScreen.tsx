@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ViewStyle } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { AppScreen, PrimaryButton, Card } from "../components";
+import { AppScreen, PrimaryButton, DuotoneCard, type DuotonePalette } from "../components";
 import { theme } from "../theme";
 import type { DefaultBehavior } from "../storage/onboarding";
 
@@ -15,18 +15,21 @@ const BEHAVIORS: Array<{
   title: string;
   description: string;
   icon: keyof typeof MaterialIcons.glyphMap;
+  palette: DuotonePalette;
 }> = [
   {
     id: "quick-start",
     title: "Quick Start",
     description: "Start a recommended session immediately",
     icon: "flash-on",
+    palette: "honey",
   },
   {
     id: "choose-each-time",
     title: "Choose Each Time",
     description: "Browse and pick a session every time",
     icon: "explore",
+    palette: "lavender",
   },
 ];
 
@@ -53,32 +56,27 @@ export default function OnboardingBehaviorScreen({ onComplete, onSkip }: Onboard
           {BEHAVIORS.map((behavior) => {
             const isSelected = selectedBehavior === behavior.id;
             return (
-              <Pressable
-                key={behavior.id}
-                onPress={() => setSelectedBehavior(behavior.id)}
-                style={styles.behaviorPressable}
-              >
-                <Card
-                  variant={isSelected ? "elevated" : "default"}
-                  style={StyleSheet.flatten([
-                    styles.behaviorCard,
-                    isSelected && { borderColor: theme.colors.accent.primary, borderWidth: 2 },
-                  ]) as ViewStyle}
+              <View key={behavior.id} style={styles.behaviorWrapper}>
+                <DuotoneCard
+                  title={behavior.title}
+                  subtitle={behavior.description}
+                  icon={behavior.icon}
+                  palette={behavior.palette}
+                  height={140}
+                  onPress={() => setSelectedBehavior(behavior.id)}
+                  style={isSelected ? styles.behaviorSelected : undefined}
                 >
-                  <MaterialIcons
-                    name={behavior.icon}
-                    size={32}
-                    color={isSelected ? theme.colors.accent.primary : theme.colors.text.secondary}
-                  />
-                  <View style={styles.behaviorContent}>
-                    <Text style={styles.behaviorTitle}>{behavior.title}</Text>
-                    <Text style={styles.behaviorDescription}>{behavior.description}</Text>
+                  <View style={styles.behaviorCardContent}>
+                    <View style={styles.behaviorCardInfo}>
+                      <Text style={styles.behaviorCardTitle}>{behavior.title}</Text>
+                      <Text style={styles.behaviorCardDescription}>{behavior.description}</Text>
+                    </View>
+                    {isSelected && (
+                      <MaterialIcons name="check-circle" size={24} color="#ffffff" />
+                    )}
                   </View>
-                  {isSelected && (
-                    <MaterialIcons name="check-circle" size={24} color={theme.colors.accent.primary} />
-                  )}
-                </Card>
-              </Pressable>
+                </DuotoneCard>
+              </View>
             );
           })}
         </View>
@@ -129,31 +127,40 @@ const styles = StyleSheet.create({
   },
   behaviorsList: {
     paddingHorizontal: theme.spacing[6],
-    gap: theme.spacing[4],
+    gap: theme.spacing[3],
     paddingBottom: theme.spacing[6],
   },
-  behaviorPressable: {
+  behaviorWrapper: {
     width: "100%",
   },
-  behaviorCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[4],
-    padding: theme.spacing[4],
+  behaviorSelected: {
+    borderWidth: 3,
+    borderColor: "rgba(255, 255, 255, 0.8)",
   },
-  behaviorContent: {
+  behaviorCardContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+  },
+  behaviorCardInfo: {
     flex: 1,
     gap: theme.spacing[1],
   },
-  behaviorTitle: {
-    ...theme.typography.styles.h3,
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.text.primary,
+  behaviorCardTitle: {
+    fontFamily: theme.typography.fontFamily.semibold,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: "600",
+    color: "#ffffff",
+    textShadowColor: "rgba(0, 0, 0, 0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
-  behaviorDescription: {
-    ...theme.typography.styles.body,
-    color: theme.colors.text.tertiary,
+  behaviorCardDescription: {
+    fontFamily: theme.typography.fontFamily.regular,
+    fontSize: theme.typography.fontSize.sm,
+    color: "rgba(255, 255, 255, 0.85)",
+    lineHeight: 18,
   },
   actions: {
     paddingHorizontal: theme.spacing[6],

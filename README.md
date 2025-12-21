@@ -37,6 +37,7 @@ This creates 3 catalog sessions you can test with:
 ```bash
 pnpm -C apps/api dev
 ```
+powershell -ExecutionPolicy Bypass -File apps/api/start-dev.ps1
 
 The API will run on `http://localhost:8787`
 

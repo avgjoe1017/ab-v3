@@ -4,7 +4,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { getAudioEngine } from "@ab/audio-engine";
-import { AppScreen, SessionTile, SectionHeader, MiniPlayer, IconButton, Card } from "../components";
+import { AppScreen, SessionTile, SectionHeader, MiniPlayer, IconButton, Card, DuotoneCard, type DuotonePalette } from "../components";
 import { theme } from "../theme";
 
 type SessionRow = { id: string; title: string; goalTag?: string };
@@ -14,7 +14,7 @@ interface SOSSession {
   title: string;
   description: string;
   icon: keyof typeof MaterialIcons.glyphMap;
-  color: string;
+  palette: DuotonePalette;
 }
 
 // Placeholder SOS sessions - these should be replaced with real sessions from the API
@@ -25,42 +25,42 @@ const PLACEHOLDER_SOS_SESSIONS: SOSSession[] = [
     title: "Racing Thoughts",
     description: "Slow down your mind",
     icon: "speed",
-    color: "#a855f7",
+    palette: "lavender",
   },
   {
     id: "sos-2",
     title: "Panic Spike",
     description: "Ground yourself quickly",
-    icon: "emergency",
-    color: "#ef4444",
+    icon: "favorite",
+    palette: "rose",
   },
   {
     id: "sos-3",
     title: "Can't Sleep",
     description: "Gentle rest for body and mind",
     icon: "bedtime",
-    color: "#3b82f6",
+    palette: "twilight",
   },
   {
     id: "sos-4",
     title: "Social Anxiety",
     description: "Feel calm and confident",
     icon: "people",
-    color: "#14b8a6",
+    palette: "sage",
   },
   {
     id: "sos-5",
     title: "Overwhelm",
     description: "One thing at a time",
     icon: "water-drop",
-    color: "#6366f1",
+    palette: "sky",
   },
   {
     id: "sos-6",
     title: "Reset",
     description: "Start fresh, right now",
     icon: "refresh",
-    color: "#f97316",
+    palette: "honey",
   },
 ];
 
@@ -88,7 +88,7 @@ export default function SOSScreen({ navigation }: any) {
           title: s.title,
           description: getDescriptionForTitle(s.title),
           icon: getIconForTitle(s.title) as keyof typeof MaterialIcons.glyphMap,
-          color: getColorForTitle(s.title),
+          palette: getPaletteForTitle(s.title),
         }));
       }
     }
@@ -152,29 +152,16 @@ export default function SOSScreen({ navigation }: any) {
         {/* SOS Sessions Grid */}
         <View style={styles.sessionsGrid}>
           {sosSessions.map((session) => (
-            <Card
+            <DuotoneCard
               key={session.id}
-              variant="elevated"
+              title={session.title}
+              subtitle={session.description}
+              icon={session.icon}
+              palette={session.palette}
+              height={130}
+              showArrow
               onPress={() => handleSessionPress(session.id)}
-              style={styles.sessionCard}
-            >
-              <View style={[styles.sessionIconContainer, { backgroundColor: `${session.color}20` }]}>
-                <MaterialIcons name={session.icon} size={32} color={session.color} />
-              </View>
-              <View style={styles.sessionContent}>
-                <Text style={styles.sessionTitle}>{session.title}</Text>
-                <Text style={styles.sessionDescription}>{session.description}</Text>
-                <View style={styles.sessionBadge}>
-                  <MaterialIcons name="schedule" size={14} color={theme.colors.text.tertiary} />
-                  <Text style={styles.sessionBadgeText}>2-6 min</Text>
-                </View>
-              </View>
-              <MaterialIcons
-                name="play-arrow"
-                size={24}
-                color={session.color}
-              />
-            </Card>
+            />
           ))}
         </View>
 
@@ -213,15 +200,15 @@ function getIconForTitle(title: string): string {
   return "self-improvement";
 }
 
-function getColorForTitle(title: string): string {
+function getPaletteForTitle(title: string): DuotonePalette {
   const titleLower = title.toLowerCase();
-  if (titleLower.includes("racing") || titleLower.includes("thought")) return "#a855f7";
-  if (titleLower.includes("panic")) return "#ef4444";
-  if (titleLower.includes("sleep")) return "#3b82f6";
-  if (titleLower.includes("social") || titleLower.includes("anxiety")) return "#14b8a6";
-  if (titleLower.includes("overwhelm")) return "#6366f1";
-  if (titleLower.includes("reset")) return "#f97316";
-  return "#6366f1";
+  if (titleLower.includes("racing") || titleLower.includes("thought")) return "lavender";
+  if (titleLower.includes("panic")) return "rose";
+  if (titleLower.includes("sleep")) return "twilight";
+  if (titleLower.includes("social") || titleLower.includes("anxiety")) return "sage";
+  if (titleLower.includes("overwhelm")) return "sky";
+  if (titleLower.includes("reset")) return "honey";
+  return "mist";
 }
 
 const styles = StyleSheet.create({
@@ -287,44 +274,7 @@ const styles = StyleSheet.create({
   },
   sessionsGrid: {
     paddingHorizontal: theme.spacing[6],
-    gap: theme.spacing[4],
-  },
-  sessionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[4],
-    padding: theme.spacing[4],
-  },
-  sessionIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: theme.radius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sessionContent: {
-    flex: 1,
-    gap: theme.spacing[1],
-  },
-  sessionTitle: {
-    ...theme.typography.styles.h3,
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.text.primary,
-  },
-  sessionDescription: {
-    ...theme.typography.styles.caption,
-    color: theme.colors.text.tertiary,
-  },
-  sessionBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    marginTop: theme.spacing[1],
-  },
-  sessionBadgeText: {
-    ...theme.typography.styles.caption,
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.text.tertiary,
+    gap: theme.spacing[3],
   },
 });
 

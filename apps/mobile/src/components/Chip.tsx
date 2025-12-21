@@ -13,6 +13,7 @@ interface ChipProps {
 
 /**
  * Chip - Tag/chip component for filters and labels
+ * Design: Dark filled when active, light outlined when inactive
  */
 export const Chip: React.FC<ChipProps> = ({
   label,
@@ -26,17 +27,13 @@ export const Chip: React.FC<ChipProps> = ({
 
   const chipStyle = [
     styles.chip,
-    variant === "primary" && styles.chipPrimary,
-    active && variant === "default" && styles.chipActive,
-    active && variant === "primary" && styles.chipPrimaryActive,
+    active && styles.chipActive,
     style,
   ];
 
   const labelStyle = [
     styles.label,
-    variant === "primary" && styles.labelPrimary,
-    active && variant === "default" && styles.labelActive,
-    active && variant === "primary" && styles.labelPrimaryActive,
+    active && styles.labelActive,
     textStyle,
   ];
 
@@ -63,43 +60,29 @@ export const Chip: React.FC<ChipProps> = ({
 
 const styles = StyleSheet.create({
   chip: {
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.radius.full,
-    backgroundColor: theme.colors.background.surface,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    borderColor: "#dee2e6",
     alignSelf: "flex-start",
   },
-  chipPrimary: {
-    backgroundColor: theme.colors.accent.primary,
-    borderColor: theme.colors.accent.primary,
-  },
   chipActive: {
-    backgroundColor: theme.colors.background.surfaceElevated,
-    borderColor: theme.colors.accent.primary,
-  },
-  chipPrimaryActive: {
-    backgroundColor: theme.colors.accent.primary,
+    backgroundColor: "#212529",
+    borderColor: "#212529",
   },
   label: {
-    ...theme.typography.styles.label,
-    color: theme.colors.text.secondary,
-  },
-  labelPrimary: {
-    ...theme.typography.styles.label,
-    color: theme.colors.text.primary,
+    fontFamily: theme.typography.fontFamily.medium,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#212529",
   },
   labelActive: {
-    ...theme.typography.styles.label,
-    color: theme.colors.text.primary,
-  },
-  labelPrimaryActive: {
-    ...theme.typography.styles.label,
-    color: theme.colors.text.primary,
+    color: "#ffffff",
   },
   chipPressed: {
     opacity: 0.8,
+    transform: [{ scale: 0.98 }],
   },
 });
-

@@ -7,7 +7,8 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { ClerkProvider } from "@clerk/clerk-expo";
 import { MaterialIcons } from "@expo/vector-icons";
-import { View } from "react-native";
+import { View, Pressable } from "react-native";
+import type { BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
 import { useFonts } from "expo-font";
 import {
   Inter_400Regular,
@@ -19,6 +20,7 @@ import HomeScreen from "./screens/HomeScreen";
 import ExploreScreen from "./screens/ExploreScreen";
 import PlayerScreen from "./screens/PlayerScreen";
 import EditorScreen from "./screens/EditorScreen";
+import AIAffirmationScreen from "./screens/AIAffirmationScreen";
 import SOSScreen from "./screens/SOSScreen";
 import ProgramsListScreen from "./screens/ProgramsListScreen";
 import ProgramDetailScreen from "./screens/ProgramDetailScreen";
@@ -37,38 +39,71 @@ const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 const queryClient = new QueryClient();
 
+// Custom tab bar button with conditional black background
+const CustomTabBarButton = ({ children, onPress, accessibilityState, ...props }: BottomTabBarButtonProps) => {
+  const isFocused = accessibilityState?.selected ?? false;
+  
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        flex: 1,
+        backgroundColor: isFocused ? "#000000" : "transparent",
+        borderRadius: 24,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        marginHorizontal: 2,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      {...props}
+    >
+      {children}
+    </Pressable>
+  );
+};
+
+// Floating bottom tab bar styles - white pill with black border
+const floatingTabBarStyle = {
+  position: "absolute" as const,
+  bottom: 20,
+  left: 20,
+  right: 20,
+  backgroundColor: "#ffffff",
+  borderRadius: 32,
+  height: 64,
+  paddingBottom: 8,
+  paddingTop: 8,
+  paddingHorizontal: 4,
+  elevation: 8,
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.1,
+  shadowRadius: 12,
+  borderTopWidth: 0,
+  borderWidth: 1,
+  borderColor: "#000000",
+};
+
 // Main Tab Navigator for the 4 main pages
 function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.colors.accent.secondary,
-        tabBarInactiveTintColor: theme.colors.text.muted,
-        tabBarStyle: {
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 85,
-          backgroundColor: "rgba(15, 23, 42, 0.95)",
-          borderTopWidth: 1,
-          borderTopColor: theme.colors.border.subtle,
-          paddingBottom: theme.spacing[6],
-          paddingTop: theme.spacing[2],
-          paddingHorizontal: theme.spacing[6],
-          elevation: 0, // Remove shadow on Android
-        },
+        tabBarActiveTintColor: "#ffffff", // White for active tab (icon and text)
+        tabBarInactiveTintColor: "#000000", // Black for inactive tabs
+        tabBarStyle: floatingTabBarStyle,
         tabBarLabelStyle: {
-          fontSize: theme.typography.fontSize.xs,
-          fontWeight: theme.typography.fontWeight.medium,
+          fontSize: 11,
+          fontWeight: "600",
+          marginTop: 2,
         },
         tabBarIconStyle: {
-          marginTop: theme.spacing[1],
+          marginTop: 0,
         },
-        // Smooth screen transitions - tabs stay mounted for instant switching
+        tabBarLabelVisibilityMode: "selected", // Show label only for selected tab
         lazy: false,
-        // Disable default animations for smoother tab switching
         tabBarHideOnKeyboard: true,
       }}
     >
@@ -77,56 +112,32 @@ function MainTabs() {
         component={HomeScreen}
         options={{
           tabBarIcon: ({ color, focused }) => (
-            <View style={{ position: "relative" }}>
-              <MaterialIcons
-                name="calendar-today"
-                size={24}
-                color={color}
-              />
-              {focused && (
-                <View style={{
-                  position: "absolute",
-                  top: -4,
-                  right: -4,
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: theme.colors.accent.secondary,
-                }} />
-              )}
-            </View>
+            <MaterialIcons name="auto-awesome" size={24} color={color} />
           ),
-          tabBarLabel: "Today",
+          tabBarLabel: "Home",
+          tabBarButton: (props) => <CustomTabBarButton {...props} />,
         }}
       />
       <Tab.Screen
         name="Explore"
         component={ExploreScreen}
         options={{
-          tabBarIcon: ({ color }) => (
+          tabBarIcon: ({ color, focused }) => (
             <MaterialIcons name="explore" size={24} color={color} />
           ),
           tabBarLabel: "Explore",
-        }}
-      />
-      <Tab.Screen
-        name="Programs"
-        component={ProgramsListScreen}
-        options={{
-          tabBarIcon: ({ color }) => (
-            <MaterialIcons name="book" size={24} color={color} />
-          ),
-          tabBarLabel: "Programs",
+          tabBarButton: (props) => <CustomTabBarButton {...props} />,
         }}
       />
       <Tab.Screen
         name="Library"
         component={LibraryScreen}
         options={{
-          tabBarIcon: ({ color }) => (
-            <MaterialIcons name="library-music" size={24} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <MaterialIcons name="favorite" size={24} color={color} />
           ),
-          tabBarLabel: "Library",
+          tabBarLabel: "My Library",
+          tabBarButton: (props) => <CustomTabBarButton {...props} />,
         }}
       />
     </Tab.Navigator>
@@ -159,7 +170,8 @@ function MainApp() {
         {/* Main tabs as the initial screen */}
         <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
         {/* Detail screens */}
-        <Stack.Screen name="Editor" component={EditorScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Editor" component={AIAffirmationScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="EditorLegacy" component={EditorScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
         <Stack.Screen name="SOS" component={SOSScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ProgramDetail" component={ProgramDetailScreen} options={{ headerShown: false }} />
