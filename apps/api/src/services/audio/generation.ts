@@ -232,7 +232,8 @@ export async function ensureSilence(durationMs: number): Promise<string> {
     return useAsset.url;
 }
 
-const FIXED_SILENCE_MS = 3000; // Product Rule: Fixed silence
+const SILENCE_BETWEEN_READS_MS = 1500; // 1.5 seconds of silence between first and second read of same phrase
+const FIXED_SILENCE_MS = 4000; // 4 seconds of silence after second read, before next phrase
 
 export async function processEnsureAudioJob(payload: { sessionId: string }) {
     const { sessionId } = payload;
@@ -328,13 +329,17 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         const path1 = await ensureAffirmationChunk(aff.text, session.voiceId, effectivePace, 1);
         filePaths.push(path1);
 
+        // Silence between reads (1.5 seconds)
+        const silenceBetweenReads = await ensureSilence(SILENCE_BETWEEN_READS_MS);
+        filePaths.push(silenceBetweenReads);
+
         // Read 2 (Variation)
         const path2 = await ensureAffirmationChunk(aff.text, session.voiceId, effectivePace, 2);
         filePaths.push(path2);
 
-        // Silence (Fixed)
-        const silencePath = await ensureSilence(FIXED_SILENCE_MS);
-        filePaths.push(silencePath);
+        // Silence after second read (4 seconds before next phrase)
+        const silenceAfterRead = await ensureSilence(FIXED_SILENCE_MS);
+        filePaths.push(silenceAfterRead);
     }
 
     // 2. Stitch

@@ -6728,7 +6728,130 @@ Implemented comprehensive improvements based on prompt structure analysis:
 
 ---
 
+## 2025-12-21 11:49:21 - Added Slow Voice Speed and 1.5s Silence, Removed All Time/Duration References
+
+**Purpose**: Add slow speed to voices, set 1.5 second silence between repeated phrases, and remove all duration/time references from the app since sessions are unlimited loops.
+
+### Changes Made
+- **Added slow speed to ElevenLabs TTS** (`apps/api/src/services/audio/tts.ts`):
+  - Added `speed: 0.75` parameter to ElevenLabs API call (range 0.7-1.2, lower = slower)
+  - Creates slower, more meditative delivery for all affirmations
+- **Updated silence timing** (`apps/api/src/services/audio/generation.ts`):
+  - Added `SILENCE_BETWEEN_READS_MS = 1500` (1.5 seconds of silence between first and second read of same phrase)
+  - Changed `FIXED_SILENCE_MS` from 3000ms to 4000ms (4 seconds of silence after second read, before next phrase)
+  - Pattern is now: "I am strong" → 1.5s silence → "I am strong" → 4s silence → "Next phrase"...
+- **Removed all duration/time references from mobile app**:
+  - `HeroDeckCard.tsx`: Removed duration display from metadata row
+  - `ExploreScreen.tsx`: Removed `durationOptions` from HeroSession mapping
+  - `ExploreHeroDeck.tsx`: Removed `durationOptions` from HeroSession type
+  - `PlayerScreen.tsx`: Removed time display ("Session Focus" with position/duration)
+  - `HomeScreen.tsx`: Removed duration formatting and display from last session metadata
+  - `SOSScreen.tsx`: Changed "2-6 minute sessions" to "Sessions" (removed time reference)
+  - Removed unused `formatTime` function from PlayerScreen
+
+### Technical Details
+- **ElevenLabs speed parameter**: Accepts values 0.7-1.2, where lower values create slower speech
+- Set to 0.75 for slow, deliberate, meditative delivery
+- Works alongside existing stability and similarity_boost settings
+- **Silence duration**: Changed from 3 seconds to 1.5 seconds between the second read and next affirmation
+- 1500ms is already in the `SILENCE_DURATIONS_MS` array, so pre-generated chunks are available
+- **Time removal**: All UI references to session duration, time remaining, and minutes have been removed
+- Sessions are infinite loops - time doesn't exist in the app experience
+- Sleep timer remains (it's a feature, not session duration)
+
+**Why**: Users requested slower voices and 1.5 second pauses between repeated phrases. Since all sessions are unlimited loops, any reference to duration or time creates confusion and contradicts the product philosophy. The app is an "ambient belief environment" where time doesn't exist - sessions continue until manually stopped.
+
+---
+
+## 2025-12-21 11:50:28 - Corrected Silence Timing: 1.5s Between Reads, 4s After
+
+**Purpose**: Fix silence placement - 1.5 seconds should be BETWEEN the two reads of the same phrase, not after.
+
+### Changes Made
+- **Updated silence timing** (`apps/api/src/services/audio/generation.ts`):
+  - Added `SILENCE_BETWEEN_READS_MS = 1500` (1.5 seconds between first and second read)
+  - Changed `FIXED_SILENCE_MS` to 4000 (4 seconds after second read, before next phrase)
+  - Updated affirmation stitching order:
+    1. Read 1: "I am strong"
+    2. 1.5 seconds of silence
+    3. Read 2: "I am strong"
+    4. 4 seconds of silence
+    5. Next phrase...
+
+### Technical Details
+- Both 1500ms and 4000ms are in the `SILENCE_DURATIONS_MS` array, so pre-generated silence chunks are available
+- The pattern now correctly places the 1.5 second pause between the two reads of the same affirmation
+- The 4 second pause provides integration space before moving to the next affirmation
+
+**Why**: The initial implementation placed 1.5 seconds after the second read, but the user wanted it between the two reads of the same phrase. This creates the correct rhythm: phrase → pause → repeat → longer pause → next phrase.
+
+---
+
 ## 2025-01-14 - Fixed Gaps in Beats/Background Audio Playback
+
+## 2025-01-14 - Comprehensive Affirmation Pipeline & Player Documentation
+
+**Time:** 2025-01-14  
+**Purpose:** Create comprehensive documentation of the affirmation generation pipeline and audio player system for onboarding and reference.
+
+**Actions Taken:**
+- Explored the entire codebase to understand the affirmation generation and audio playback architecture
+- Documented the complete pipeline from user input to audio playback
+- Created detailed documentation file: `MD_DOCS/AFFIRMATION_PIPELINE_AND_PLAYER.md`
+
+**Key Components Documented:**
+
+1. **Affirmation Generation Pipeline:**
+   - OpenAI Chat Completions API with prompt caching for cost efficiency
+   - Neuroscience-based generation rules (5 Linguistic Commandments, 3 Frameworks)
+   - Post-validation against strict rules (present tense, no negatives, 5-12 words, etc.)
+   - Automatic retry logic with temperature adjustment
+
+2. **Audio Generation Pipeline:**
+   - TTS chunk generation with caching (hash-based)
+   - Dual read pattern: each affirmation spoken twice with variation
+   - Audio stitching with FFmpeg (loudness normalization, loop padding)
+   - Voice activity detection for ducking (background/binaural lowering during speech)
+   - S3/CloudFront integration for CDN delivery
+
+3. **Playback Bundle API:**
+   - `GET /sessions/:id/playback-bundle` endpoint
+   - Resolves binaural/background assets (platform-aware URLs)
+   - Constructs affirmations URL (S3 or local file serving)
+   - Includes metadata (loudness, voice activity segments)
+
+4. **Audio Engine Architecture:**
+   - Singleton pattern with state machine (idle → loading → preroll → playing → paused)
+   - 3-track model: Affirmations, Binaural, Background (all loop independently)
+   - Pre-roll atmosphere system (starts within 100-300ms)
+   - Crossfade from pre-roll to main mix (1.75s equal-power curve)
+   - Mix controls with smooth ramping
+   - Voice activity ducking via control loop (25ms tick)
+
+5. **Player Screen Integration:**
+   - Auto-load and auto-play when bundle available
+   - Subscribe to AudioEngine state for UI updates
+   - Mix controls with sliders
+   - Error handling with "Generate Audio" fallback
+
+**Documentation Structure:**
+- Part 1: Affirmation Generation Pipeline (service, rules, validation)
+- Part 2: Audio Generation Pipeline (TTS, stitching, caching)
+- Part 3: Playback Bundle API (endpoint, asset resolution)
+- Part 4: Audio Player System (engine architecture, flow, controls)
+- Data Flow Summary (visual pipeline representation)
+- Files Reference (key files organized by responsibility)
+
+**Decision Rationale:**
+- Created comprehensive documentation to help with onboarding and codebase understanding
+- Organized by functional area (generation → audio → API → player) for clear understanding
+- Included code references with line numbers for easy navigation
+- Documented key design decisions and V3 compliance rules
+
+**Files Created:**
+- `MD_DOCS/AFFIRMATION_PIPELINE_AND_PLAYER.md` - Complete system documentation
+
+**Result:** ✅ Comprehensive documentation created covering the entire affirmation generation and playback pipeline. This serves as a reference for understanding how the system works end-to-end.
 
 **Purpose**: Fix gaps that occur during playback (around 30 seconds) and at loop transitions, preventing seamless playback.
 

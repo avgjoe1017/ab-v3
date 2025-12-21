@@ -267,19 +267,10 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
-  // Format duration for display
-  const formatDuration = (sec: number) => {
-    const minutes = Math.round(sec / 60);
-    return `${minutes} min`;
-  };
-
   // Format last session metadata
   const getLastSessionMetadata = () => {
     if (!lastSession) return "";
     const parts: string[] = [];
-    if (lastSession.durationSec) {
-      parts.push(formatDuration(lastSession.durationSec));
-    }
     if (lastSession.voiceDisplayName) {
       parts.push(lastSession.voiceDisplayName);
     }

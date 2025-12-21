@@ -55,7 +55,6 @@ export default function ExploreScreen({ navigation }: any) {
       id: s.id,
       title: s.title,
       subtitle: `A ${s.goalTag ? s.goalTag.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'Session'} session designed to help you find your center.`,
-      durationOptions: [15, 20, 30],
       category: s.goalTag ? s.goalTag.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'Session',
       intensity: "Medium" as const,
       goalTag: s.goalTag,

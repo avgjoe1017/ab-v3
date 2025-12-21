@@ -201,6 +201,8 @@ async function generateElevenLabsTTS(
           style: 0.0, // Neutral style for calm affirmations
           use_speaker_boost: false,
         },
+        // Slow, meditative speed (0.7-1.2 range, lower = slower)
+        speed: 0.75, // Slow, deliberate pace for meditative delivery
       }),
     }
   );

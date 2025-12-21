@@ -22,10 +22,6 @@ export function HeroDeckCard({
   const gradient = getSessionGradient(session.id, session.goalTag);
   const gradientColors = [gradient.colors[0], gradient.colors[1], gradient.colors[1]] as [string, string, string];
 
-  const durationText = session.durationOptions?.length
-    ? `${Math.min(...session.durationOptions)}-${Math.max(...session.durationOptions)} min`
-    : "15-30 min";
-
   const intensityText = session.intensity || "Medium";
 
   return (
@@ -67,10 +63,6 @@ export function HeroDeckCard({
 
           {/* Metadata row */}
           <View style={styles.metadataRow}>
-            <View style={styles.metadataItem}>
-              <MaterialIcons name="schedule" size={14} color="rgba(255,255,255,0.8)" />
-              <Text style={styles.metadataText}>{durationText}</Text>
-            </View>
             <View style={styles.metadataItem}>
               <MaterialIcons name="fiber-manual-record" size={8} color="rgba(255,255,255,0.6)" />
               <Text style={styles.metadataText}>{intensityText}</Text>

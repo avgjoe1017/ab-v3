@@ -13,15 +13,6 @@ import { useSleepTimer } from "../hooks/useSleepTimer";
 import { saveMixPreset } from "../storage/mixPresets";
 import { getPlayerBackgroundGradient, getSessionGradient } from "../lib/sessionArt";
 
-// Helper to format time in MM:SS
-function formatTime(ms: number): string {
-  if (!ms || isNaN(ms)) return "0:00";
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
 // Helper to format sleep timer time remaining
 function formatSleepTimer(ms: number | null): string {
   if (!ms || ms === 0) return "";
@@ -373,13 +364,6 @@ export default function PlayerScreen({ route, navigation }: any) {
               />
             </View>
 
-            {/* Time Display */}
-            <View style={styles.timeDisplay}>
-              <Text style={styles.timeLabel}>Session Focus</Text>
-              <Text style={styles.timeValue}>
-                {formatTime(positionMs)} / {formatTime(durationMs)}
-              </Text>
-            </View>
           </View>
         )}
 

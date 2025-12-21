@@ -137,7 +137,7 @@ export default function SOSScreen({ navigation }: any) {
               <Text style={styles.sosBadgeText}>SOS</Text>
             </View>
             <Text style={styles.headerTitle}>Quick Help</Text>
-            <Text style={styles.headerSubtitle}>2-6 minute sessions for immediate relief</Text>
+            <Text style={styles.headerSubtitle}>Sessions for immediate relief</Text>
           </View>
           <View style={styles.headerSpacer} />
         </View>

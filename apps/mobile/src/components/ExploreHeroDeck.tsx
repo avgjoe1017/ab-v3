@@ -16,7 +16,6 @@ export type HeroSession = {
   id: string;
   title: string;
   subtitle: string;
-  durationOptions?: number[];
   category: string;
   intensity?: "Soft" | "Medium" | "Deep";
   goalTag?: string;
