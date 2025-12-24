@@ -1,13 +1,13 @@
 /**
  * Affirmation Generation Service
- * Uses OpenAI Chat Completions API with Prompt Caching to generate values-based, personalized affirmations
+ * Uses OpenAI Chat Completions API with Prompt Caching to generate personalized affirmations
  * 
  * Phase 1.1: Core AI Pipeline
  * Phase 1.2: Prompt Caching Implementation (2025-01-14)
  * 
  * Note: OpenAI automatically caches prompts >= 1024 tokens. We structure our prompts
  * to maximize cache hits by placing static content (rules, schema, examples) first
- * and dynamic content (user values, struggle, session type) last.
+ * and dynamic content (struggle, session type, goal) last.
  */
 
 import OpenAI from "openai";
@@ -15,7 +15,6 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 export interface AffirmationGenerationRequest {
-  values?: string[]; // User's core values (from onboarding)
   sessionType: string; // "Focus", "Sleep", "Meditate", etc.
   struggle?: string; // Optional: what user is working on
   goal?: string; // User's written goal/intention for this specific session (e.g., "Morning Confidence", "I want to feel more confident at work")
@@ -215,12 +214,6 @@ function buildDynamicTail(
     }
   }
   
-  if (request.values && request.values.length > 0) {
-    parts.push(`values: [${request.values.map(v => `"${v}"`).join(", ")}]`);
-  } else {
-    parts.push(`values: []`);
-  }
-  
   if (request.struggle) {
     parts.push(`struggle: "${request.struggle}"`);
   }
@@ -238,14 +231,13 @@ function buildDynamicTail(
  * 
  * Requirements (per roadmap):
  * - First-person statements ("I am..." not "You are...")
- * - Values-connected (not generic positivity)
  * - Present tense, believable stretch (not delusional)
  * - Appropriate for user's self-esteem level (avoid backfire effect)
  * - Each affirmation 5-12 words
  * 
  * Implementation uses Prompt Caching:
  * - Static prefix (rules, schema, examples) placed in system message
- * - Dynamic tail (user values, struggle, session type) placed in user message
+ * - Dynamic tail (struggle, session type, goal) placed in user message
  * - OpenAI automatically caches prompts >= 1024 tokens
  * - Cache metrics available in response.usage.prompt_tokens_details.cached_tokens
  */

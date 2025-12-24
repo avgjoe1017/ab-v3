@@ -2,7 +2,6 @@ import fs from "fs-extra";
 import path from "path";
 import crypto from "crypto";
 import ffmpegStatic from "ffmpeg-static";
-import { PrismaClient } from "@prisma/client";
 import { AUDIO_PROFILE_V3 } from "@ab/contracts"; // Constants export might need adjustment if not direct
 import { stitchAudioFiles } from "./stitching";
 import { CHUNKS_DIR, SILENCE_DURATIONS_MS } from "./constants";
@@ -13,6 +12,8 @@ import { measureLoudness } from "./loudness";
 import { generateVoiceActivitySegments } from "./voiceActivity";
 import { generateAffirmations } from "../affirmation-generator";
 import { uploadToS3, generateS3Key, isS3Configured } from "../storage/s3";
+import { getAudioMetadata, calculateFileChecksum } from "./metadata";
+import { moderateAffirmation } from "../moderation";
 const execFileAsync = promisify(execFile);
 
 // Temporary fix for simple imports if contracts export isn't fully set up with types in this context
@@ -97,77 +98,150 @@ export async function pregenerateSilenceChunks(): Promise<void> {
     console.log("✅ All silence chunks pre-generated");
 }
 
+/**
+ * Result of affirmation chunk generation
+ * Includes optional timestamp data for voice activity detection (skips FFmpeg silencedetect)
+ */
+export interface AffirmationChunkResult {
+    hash: string;
+    url: string;
+    /** Duration of this chunk in milliseconds */
+    durationMs?: number;
+    /** Voice activity timestamps (when TTS provider supports them) */
+    timestamps?: Array<{ startMs: number; endMs: number }>;
+    /** Whether TTS provided timestamps (vs needing FFmpeg fallback) */
+    hasTimestamps?: boolean;
+}
+
+/**
+ * Ensure affirmation chunk exists, return hash, URL, and optional timestamp data
+ * Hash is stable across environments (not based on file paths)
+ * 
+ * When using ElevenLabs with timestamps, voice activity segments are extracted
+ * directly from TTS response - no FFmpeg silencedetect needed.
+ */
 export async function ensureAffirmationChunk(
     text: string,
     voiceId: string,
     pace: string,
     variant: number = 1
-): Promise<string> {
-    // 1. Calc Hash (variant included)
+): Promise<AffirmationChunkResult> {
+    // 1. Calc Hash (variant included) - this is stable across environments
     const hash = hashContent(`${voiceId}:${pace}:${text}:${variant}:${AUDIO_PROFILE_V3.VERSION}`);
     const filename = `${hash}.mp3`;
     const filePath = path.join(CHUNKS_DIR, filename);
 
-    // 2. Check DB / File
+    // 2. Check DB / File (including cached timestamp data)
     const existing = await prisma.audioAsset.findUnique({
         where: { kind_hash: { kind: "affirmationChunk", hash } },
     });
 
     if (existing && (await fs.pathExists(existing.url))) {
-        return existing.url;
+        // Try to extract cached timestamp data from metaJson
+        let cachedTimestamps: AffirmationChunkResult | undefined;
+        if (existing.metaJson) {
+            try {
+                const meta = JSON.parse(existing.metaJson);
+                cachedTimestamps = {
+                    hash,
+                    url: existing.url,
+                    durationMs: meta.durationMs,
+                    timestamps: meta.timestamps,
+                    hasTimestamps: meta.hasTimestamps,
+                };
+            } catch {
+                // Ignore parse errors
+            }
+        }
+        return cachedTimestamps || { hash, url: existing.url };
     }
 
     // 3. Generate using TTS service (falls back to beep if TTS not configured)
     await ensureDirectory(CHUNKS_DIR);
+
+    let ttsResult: { durationMs: number; timestamps?: Array<{ startMs: number; endMs: number }>; hasTimestamps: boolean } | undefined;
 
     if (!(await fs.pathExists(filePath))) {
         const provider = process.env.TTS_PROVIDER?.toLowerCase() || "beep";
         console.log(`[TTS] Generating affirmation chunk (v${variant}) using provider: ${provider}`);
         console.log(`[TTS] Text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
         try {
-            await generateTTSAudio(
+            ttsResult = await generateTTSAudio(
                 { text, voiceId, pace, variant },
                 filePath
             );
-            console.log(`[TTS] ✅ Audio generated successfully: ${filename}`);
+            console.log(`[TTS] ✅ Audio generated successfully: ${filename} (timestamps: ${ttsResult.hasTimestamps})`);
         } catch (error) {
             console.error(`[TTS] ❌ Failed to generate audio for ${filename}:`, error);
             throw error; // Re-throw to let caller handle
         }
     } else {
         console.log(`[TTS] Using cached audio: ${filename}`);
+        // Try to load cached timestamp metadata from DB
+        const cached = await prisma.audioAsset.findUnique({
+            where: { kind_hash: { kind: "affirmationChunk", hash } },
+        });
+        if (cached?.metaJson) {
+            try {
+                const meta = JSON.parse(cached.metaJson);
+                ttsResult = {
+                    durationMs: meta.durationMs,
+                    timestamps: meta.timestamps,
+                    hasTimestamps: meta.hasTimestamps,
+                };
+            } catch {
+                // Ignore parse errors - will use undefined (no timestamps)
+            }
+        }
     }
 
-    // 4. Save to DB
+    // 4. Save to DB with timestamp metadata
+    const metaJson = ttsResult ? JSON.stringify({
+        durationMs: ttsResult.durationMs,
+        timestamps: ttsResult.timestamps,
+        hasTimestamps: ttsResult.hasTimestamps,
+    }) : undefined;
+
     await prisma.audioAsset.upsert({
         where: { kind_hash: { kind: "affirmationChunk", hash } },
-        update: { url: filePath },
+        update: { url: filePath, metaJson },
         create: {
             kind: "affirmationChunk",
             hash,
             url: filePath,
+            metaJson,
         },
     });
 
-    return filePath;
+    return {
+        hash,
+        url: filePath,
+        durationMs: ttsResult?.durationMs,
+        timestamps: ttsResult?.timestamps,
+        hasTimestamps: ttsResult?.hasTimestamps,
+    };
 }
 
 /**
  * V3 Compliance: Silence must be pre-generated, never generated dynamically.
  * This function only retrieves pre-generated silence chunks and composes them if needed.
  */
-export async function ensureSilence(durationMs: number): Promise<string> {
+/**
+ * Ensure silence chunk exists, return both hash and URL
+ * Hash is stable across environments
+ */
+export async function ensureSilence(durationMs: number): Promise<{ hash: string; url: string }> {
     // Quantize to nearest pre-generated duration
     const quantizedDuration = Math.max(100, Math.round(durationMs / 100) * 100);
     
     // Check if we have an exact match in pre-generated chunks
-    const exactHash = `silence_${quantizedDuration}`;
+    const hash = `silence_${quantizedDuration}`;
     const exactAsset = await prisma.audioAsset.findUnique({
-        where: { kind_hash: { kind: "silence", hash: exactHash } },
+        where: { kind_hash: { kind: "silence", hash } },
     });
 
     if (exactAsset && await fs.pathExists(exactAsset.url)) {
-        return exactAsset.url;
+        return { hash, url: exactAsset.url };
     }
 
     // If no exact match, find the largest pre-generated chunk that fits
@@ -226,10 +300,10 @@ export async function ensureSilence(durationMs: number): Promise<string> {
             },
         });
 
-        return stitchedPath;
+        return { hash: composedHash, url: stitchedPath };
     }
 
-    return useAsset.url;
+    return { hash: useHash, url: useAsset.url };
 }
 
 const SILENCE_BETWEEN_READS_MS = 1500; // 1.5 seconds of silence between first and second read of same phrase
@@ -243,14 +317,7 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         where: { id: sessionId },
         include: { 
             affirmations: { orderBy: { idx: "asc" } },
-            ownerUser: {
-                include: {
-                    values: {
-                        orderBy: { rank: "asc" },
-                        take: 5, // Top 5 values
-                    },
-                },
-            },
+            ownerUser: true, // Only need user for struggle, not values
         },
     });
 
@@ -259,9 +326,6 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
     // Phase 1.1: Generate affirmations if they don't exist
     if (!session.affirmations || session.affirmations.length === 0) {
         console.log(`[Audio] No affirmations found, generating with AI...`);
-        
-        // Get user values if available
-        const userValues = session.ownerUser?.values?.map(v => v.valueText) || [];
         
         // Get user struggle if available
         const userStruggle = session.ownerUser?.struggle || undefined;
@@ -277,19 +341,29 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         try {
             // Generate affirmations
             const generated = await generateAffirmations({
-                values: userValues,
                 sessionType,
                 struggle: userStruggle,
                 count: 4, // Default to 4 affirmations
             });
 
-            // Save affirmations to database
+            // Save affirmations to database with moderation check
+            const affirmationData = await Promise.all(
+                generated.affirmations.map(async (text, idx) => {
+                    // Run moderation check
+                    const moderation = await moderateAffirmation(text);
+                    return {
+                        sessionId: session.id,
+                        idx,
+                        text,
+                        moderationStatus: moderation.shouldFlag ? "flagged" : "pending",
+                        moderationReason: moderation.reason,
+                        autoFlagged: moderation.autoFlagged,
+                    };
+                })
+            );
+
             await prisma.sessionAffirmation.createMany({
-                data: generated.affirmations.map((text, idx) => ({
-                    sessionId: session.id,
-                    idx,
-                    text,
-                })),
+                data: affirmationData,
             });
 
             // Update session hash
@@ -319,32 +393,117 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         }
     }
 
-    // 1. Gather all chunks
-    const filePaths: string[] = [];
+    // OPTIMIZATION: Pre-fetch silence chunks ONCE before the loop
+    // These only use two fixed durations, so we avoid repeated DB lookups
+    console.log(`[Audio] Pre-fetching silence chunks (1x lookup per duration)...`);
+    const [silenceBetweenReads, silenceAfterRead] = await Promise.all([
+        ensureSilence(SILENCE_BETWEEN_READS_MS),  // 1500ms - fetched once
+        ensureSilence(FIXED_SILENCE_MS),           // 4000ms - fetched once
+    ]);
+    
+    // 1. Build list of required chunks (parallelize TTS generation only)
+    // Silence chunks are now pre-fetched, so we just need to generate affirmation TTS
+    type ChunkTask = { type: "affirmation"; text: string; variant: number };
+    
+    const chunkTasks: ChunkTask[] = [];
     // Force pace to "slow" regardless of DB (Migration safety)
     const effectivePace = "slow";
 
+    // Build affirmation tasks only - silence will be interleaved after
     for (const aff of session.affirmations) {
-        // Read 1 (Neutral)
-        const path1 = await ensureAffirmationChunk(aff.text, session.voiceId, effectivePace, 1);
-        filePaths.push(path1);
-
-        // Silence between reads (1.5 seconds)
-        const silenceBetweenReads = await ensureSilence(SILENCE_BETWEEN_READS_MS);
-        filePaths.push(silenceBetweenReads);
-
-        // Read 2 (Variation)
-        const path2 = await ensureAffirmationChunk(aff.text, session.voiceId, effectivePace, 2);
-        filePaths.push(path2);
-
-        // Silence after second read (4 seconds before next phrase)
-        const silenceAfterRead = await ensureSilence(FIXED_SILENCE_MS);
-        filePaths.push(silenceAfterRead);
+        chunkTasks.push({ type: "affirmation", text: aff.text, variant: 1 });
+        chunkTasks.push({ type: "affirmation", text: aff.text, variant: 2 });
     }
 
+    // 2. Generate TTS chunks in parallel with concurrency limit
+    // This is where most of the time is spent (network calls to ElevenLabs/OpenAI)
+    // NOTE: ElevenLabs free tier allows max 3 concurrent requests - use 2 to stay safe
+    const CONCURRENCY_LIMIT = 2;
+    const affirmationChunks: AffirmationChunkResult[] = [];
+    
+    // Process TTS chunks in batches (no silence in the batch - already fetched)
+    for (let i = 0; i < chunkTasks.length; i += CONCURRENCY_LIMIT) {
+        const batch = chunkTasks.slice(i, i + CONCURRENCY_LIMIT);
+        const batchResults = await Promise.all(
+            batch.map(task => ensureAffirmationChunk(task.text, session.voiceId, effectivePace, task.variant))
+        );
+        affirmationChunks.push(...batchResults);
+    }
+    
+    // Check if we have timestamps from TTS (avoids FFmpeg silencedetect)
+    const hasAllTimestamps = affirmationChunks.every(c => c.hasTimestamps === true);
+    console.log(`[Audio] TTS timestamps available: ${hasAllTimestamps ? 'YES (skipping FFmpeg)' : 'NO (FFmpeg fallback)'}`);
+    
+    // Collect TTS timestamps for merged voice activity (if all chunks have them)
+    let ttsVoiceActivity: { segments: Array<{ startMs: number; endMs: number }> } | null = null;
+    if (hasAllTimestamps) {
+        // Build voice activity from TTS timestamps
+        // Account for silence durations between chunks
+        const segments: Array<{ startMs: number; endMs: number }> = [];
+        let currentOffset = 0;
+        
+        for (let i = 0; i < affirmationChunks.length; i += 2) {
+            const variant1 = affirmationChunks[i];
+            const variant2 = affirmationChunks[i + 1];
+            
+            // Variant 1 timestamps (offset by current position)
+            if (variant1?.timestamps) {
+                for (const ts of variant1.timestamps) {
+                    segments.push({
+                        startMs: currentOffset + ts.startMs,
+                        endMs: currentOffset + ts.endMs,
+                    });
+                }
+            }
+            currentOffset += variant1?.durationMs || 0;
+            
+            // Add silence between reads
+            currentOffset += SILENCE_BETWEEN_READS_MS;
+            
+            // Variant 2 timestamps (offset by current position)
+            if (variant2?.timestamps) {
+                for (const ts of variant2.timestamps) {
+                    segments.push({
+                        startMs: currentOffset + ts.startMs,
+                        endMs: currentOffset + ts.endMs,
+                    });
+                }
+            }
+            currentOffset += variant2?.durationMs || 0;
+            
+            // Add silence after read
+            currentOffset += FIXED_SILENCE_MS;
+        }
+        
+        if (segments.length > 0) {
+            ttsVoiceActivity = { segments };
+            console.log(`[Audio] Built voice activity from TTS timestamps: ${segments.length} segments`);
+        }
+    }
+    
+    // 3. Interleave silence chunks with affirmation chunks
+    // Pattern: [variant1, silence_1500, variant2, silence_4000, variant1, silence_1500, ...]
+    const chunkData: Array<{ hash: string; url: string }> = [];
+    for (let i = 0; i < affirmationChunks.length; i += 2) {
+        // Variant 1
+        chunkData.push(affirmationChunks[i]!);
+        // Silence between reads (1500ms)
+        chunkData.push(silenceBetweenReads);
+        // Variant 2
+        if (affirmationChunks[i + 1]) {
+            chunkData.push(affirmationChunks[i + 1]!);
+        }
+        // Silence after read (4000ms)
+        chunkData.push(silenceAfterRead);
+    }
+
+    // 3. Build file paths from chunk data
+    const filePaths = chunkData.map(c => c.url);
+
     // 2. Stitch
-    // Calculate merged hash
-    const mergedHash = hashContent(filePaths.join("|") + AUDIO_PROFILE_V3.VERSION);
+    // Calculate merged hash from chunk hashes + sequence + parameters (stable across environments)
+    const chunkHashesString = chunkData.map(c => c.hash).join("|");
+    const mergedHash = hashContent(`${chunkHashesString}|${AUDIO_PROFILE_V3.VERSION}`);
 
     // Check if merged already exists
     const existingMerged = await prisma.audioAsset.findUnique({
@@ -371,10 +530,11 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
             if (isS3Configured() && !existingMerged.url.startsWith("http")) {
                 try {
                     console.log(`[Audio] Uploading existing merged audio to S3...`);
-                    const s3Key = generateS3Key("affirmationMerged", mergedHash, "mp3");
+                    // Use m4a container and audio/mp4 content type per AUDIO_PROFILE_V3
+                    const s3Key = generateS3Key("affirmationMerged", mergedHash, AUDIO_PROFILE_V3.CONTAINER);
                     const s3Url = await uploadToS3(existingMerged.url, {
                         key: s3Key,
-                        contentType: "audio/mpeg",
+                        contentType: "audio/mp4", // AAC in M4A container
                         cacheControl: "public, max-age=31536000",
                     });
                     
@@ -406,8 +566,15 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         const loudness = await measureLoudness(mergedPath);
         
         // Generate voice activity segments for ducking
-        console.log(`[Audio] Generating voice activity segments...`);
-        const voiceActivity = await generateVoiceActivitySegments(mergedPath);
+        // OPTIMIZATION: Use TTS timestamps if available (skips FFmpeg silencedetect)
+        let voiceActivity: { segments: Array<{ startMs: number; endMs: number }> };
+        if (ttsVoiceActivity && ttsVoiceActivity.segments.length > 0) {
+            console.log(`[Audio] Using TTS-based voice activity (${ttsVoiceActivity.segments.length} segments, FFmpeg skipped)`);
+            voiceActivity = ttsVoiceActivity;
+        } else {
+            console.log(`[Audio] Generating voice activity segments via FFmpeg silencedetect...`);
+            voiceActivity = await generateVoiceActivitySegments(mergedPath);
+        }
         
         // Store metadata in metaJson
         const metaJson = JSON.stringify({
@@ -420,10 +587,11 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
         if (isS3Configured()) {
             try {
                 console.log(`[Audio] Uploading merged audio to S3...`);
-                const s3Key = generateS3Key("affirmationMerged", mergedHash, "mp3");
+                // Use m4a container and audio/mp4 content type per AUDIO_PROFILE_V3
+                const s3Key = generateS3Key("affirmationMerged", mergedHash, AUDIO_PROFILE_V3.CONTAINER);
                 const s3Url = await uploadToS3(mergedPath, {
                     key: s3Key,
-                    contentType: "audio/mpeg",
+                    contentType: "audio/mp4", // AAC in M4A container
                     cacheControl: "public, max-age=31536000", // 1 year cache
                 });
                 finalUrl = s3Url;
@@ -452,7 +620,7 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
     }
 
     // 3. Link to Session
-    await prisma.sessionAudio.upsert({
+    const sessionAudio = await prisma.sessionAudio.upsert({
         where: { sessionId },
         create: {
             sessionId,
@@ -463,6 +631,104 @@ export async function processEnsureAudioJob(payload: { sessionId: string }) {
             generatedAt: new Date(),
         }
     });
+
+    // 4. Record SessionAudioAsset entries for tracking
+    try {
+        // Record individual affirmation line audio chunks
+        for (let i = 0; i < session.affirmations.length; i++) {
+            const aff = session.affirmations[i];
+            const chunk1 = affirmationChunks[i * 2];
+            const chunk2 = affirmationChunks[i * 2 + 1];
+            
+            if (chunk1?.url) {
+                const metadata = await getAudioMetadata(chunk1.url);
+                const checksum = await calculateFileChecksum(chunk1.url);
+                
+                // Find the AudioAsset for this chunk
+                const chunkHash = hashContent(`${session.voiceId}:${effectivePace}:${aff.text}:1:${AUDIO_PROFILE_V3.VERSION}`);
+                const audioAsset = await prisma.audioAsset.findUnique({
+                    where: { kind_hash: { kind: "affirmationChunk", hash: chunkHash } },
+                });
+                
+                const storageKey = chunk1.url.startsWith("http") ? new URL(chunk1.url).pathname : chunk1.url;
+                
+                await prisma.sessionAudioAsset.create({
+                    data: {
+                        sessionId,
+                        kind: "affirmation_line",
+                        lineIndex: i,
+                        storageKey,
+                        audioAssetId: audioAsset?.id,
+                        durationMs: metadata.durationMs || chunk1.durationMs,
+                        codec: metadata.codec || "aac",
+                        sampleRate: metadata.sampleRate || 44100,
+                        channels: metadata.channels || 2,
+                        fileSize: metadata.fileSize,
+                        checksum,
+                    },
+                }).catch(() => {
+                    // Ignore duplicate errors (idempotent)
+                });
+            }
+            
+            if (chunk2?.url) {
+                const metadata = await getAudioMetadata(chunk2.url);
+                const checksum = await calculateFileChecksum(chunk2.url);
+                
+                const chunkHash = hashContent(`${session.voiceId}:${effectivePace}:${aff.text}:2:${AUDIO_PROFILE_V3.VERSION}`);
+                const audioAsset = await prisma.audioAsset.findUnique({
+                    where: { kind_hash: { kind: "affirmationChunk", hash: chunkHash } },
+                });
+                
+                const storageKey = chunk2.url.startsWith("http") ? new URL(chunk2.url).pathname : chunk2.url;
+                
+                await prisma.sessionAudioAsset.create({
+                    data: {
+                        sessionId,
+                        kind: "affirmation_line",
+                        lineIndex: i,
+                        storageKey,
+                        audioAssetId: audioAsset?.id,
+                        durationMs: metadata.durationMs || chunk2.durationMs,
+                        codec: metadata.codec || "aac",
+                        sampleRate: metadata.sampleRate || 44100,
+                        channels: metadata.channels || 2,
+                        fileSize: metadata.fileSize,
+                        checksum,
+                    },
+                }).catch(() => {
+                    // Ignore duplicate errors (idempotent)
+                });
+            }
+        }
+        
+        // Record the final merged audio
+        const mergedMetadata = await getAudioMetadata(mergedPath);
+        const mergedChecksum = await calculateFileChecksum(mergedPath);
+        const mergedStorageKey = mergedPath.startsWith("http") ? new URL(mergedPath).pathname : mergedPath;
+        
+        await prisma.sessionAudioAsset.create({
+            data: {
+                sessionId,
+                kind: "final_mix",
+                storageKey: mergedStorageKey,
+                audioAssetId: mergedAssetId,
+                durationMs: mergedMetadata.durationMs,
+                codec: mergedMetadata.codec || "aac",
+                sampleRate: mergedMetadata.sampleRate || 44100,
+                channels: mergedMetadata.channels || 2,
+                fileSize: mergedMetadata.fileSize,
+                checksum: mergedChecksum,
+            },
+        }).catch(() => {
+            // Ignore duplicate errors (idempotent)
+        });
+        
+        console.log(`[Audio] ✅ Recorded ${session.affirmations.length * 2} affirmation line assets + 1 final mix asset`);
+    } catch (assetError: any) {
+        // Don't fail the job if asset recording fails
+        console.warn(`[Audio] ⚠️  Failed to record SessionAudioAsset entries: ${assetError.message}`);
+    }
 
     return { mergedUrl: mergedPath, mergedAssetId };
 }

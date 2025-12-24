@@ -33,6 +33,7 @@ export const DraftSessionSchema = z.object({
   voiceId: z.string().min(1),
   pace: z.literal("slow").default("slow"), // Locked
   // affirmationSpacingMs: z.number().int().min(0), // Removed from user control
+  solfeggioHz: z.number().optional(), // Optional: use solfeggio instead of binaural
 });
 
 export type DraftSession = z.infer<typeof DraftSessionSchema>;
@@ -52,6 +53,7 @@ export const SessionV3Schema = z.object({
   // affirmationSpacingMs: z.number().int().min(0), // Removed
   frequencyHz: z.number().optional(), // Phase 4.1: Binaural frequency
   brainwaveState: z.enum(["Delta", "Theta", "Alpha", "SMR", "Beta"]).optional(), // Phase 4.1: Brainwave state
+  solfeggioHz: z.number().optional(), // Solfeggio frequency (alternative to binaural)
   audio: z.object({
     affirmationsMergedUrl: z.string().url(),
     affirmationsHash: z.string().min(1),
@@ -75,13 +77,19 @@ export const PlaybackBundleVMSchema = z.object({
     urlByPlatform: z.object({ ios: z.string().url(), android: z.string().url() }),
     loop: z.literal(true),
     hz: z.number().min(1),
-  }),
+  }).optional(), // Optional: session may use solfeggio instead
+  solfeggio: z.object({
+    urlByPlatform: z.object({ ios: z.string().url(), android: z.string().url() }),
+    loop: z.literal(true),
+    hz: z.number().min(1),
+  }).optional(), // Optional: session may use binaural instead
   mix: MixSchema,
   effectiveAffirmationSpacingMs: z.number().int().min(0),
   loudness: z.object({
     affirmationsLUFS: z.number().optional(),
     backgroundLUFS: z.number().optional(),
     binauralLUFS: z.number().optional(),
+    solfeggioLUFS: z.number().optional(),
   }).optional(),
   voiceActivity: z.object({
     segments: z.array(z.object({
@@ -91,7 +99,10 @@ export const PlaybackBundleVMSchema = z.object({
     thresholdDb: z.number().optional(),
     minSilenceMs: z.number().optional(),
   }).optional(),
-});
+}).refine(
+  (data) => data.binaural || data.solfeggio,
+  { message: "Either binaural or solfeggio must be provided" }
+);
 
 export type PlaybackBundleVM = z.infer<typeof PlaybackBundleVMSchema>;
 

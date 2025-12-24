@@ -97,9 +97,13 @@ export default function SessionDetailScreen({ route, navigation }: any) {
   // Get voice name from voiceId
   const voiceName = session.voiceId ? formatVoiceId(session.voiceId) : "Unknown";
 
-  // Get background/binaural info from bundle
+  // Get background/brain layer info from bundle
   const backgroundName = bundle?.background ? "Atmospheric Ambience" : "None";
-  const binauralHz = bundle?.binaural?.hz ? `${bundle.binaural.hz}Hz` : "None";
+  const brainLayerHz = bundle?.solfeggio?.hz 
+    ? `Solfeggio ${bundle.solfeggio.hz}Hz`
+    : bundle?.binaural?.hz 
+    ? `${bundle.binaural.hz}Hz`
+    : "None";
 
   return (
     <AppScreen>
@@ -163,8 +167,8 @@ export default function SessionDetailScreen({ route, navigation }: any) {
               },
               {
                 type: "binaural",
-                name: "Binaural Beats",
-                value: binauralHz,
+                name: bundle?.solfeggio ? "Solfeggio Tones" : "Binaural Beats",
+                value: brainLayerHz,
                 icon: "waves",
                 color: theme.colors.accent.secondary,
               },

@@ -30,7 +30,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet, apiPost } from "../lib/api";
 import type { SessionV3 } from "@ab/contracts";
 import { useAuthToken } from "../lib/auth";
-import { getUserValues, getUserStruggle } from "../lib/values";
+import { getUserStruggle } from "../lib/values";
 import { decideAudioSettings, packToSessionPayload, type AffirmationPack } from "../lib/affirmationPack";
 
 const MAX_INTENTION_LENGTH = 160;
@@ -115,15 +115,7 @@ export default function HomeScreen({ navigation }: any) {
       await loadHomeData(); // Refresh recent intentions
       
       // Fetch user values and struggle if available
-      let userValues: string[] = [];
       let userStruggle: string | undefined = undefined;
-
-      try {
-        const valuesResponse = await getUserValues(authToken);
-        userValues = valuesResponse.values.map(v => v.valueText);
-      } catch (err) {
-        console.log("[HomeScreen] Could not fetch user values, using empty array");
-      }
 
       try {
         const struggleResponse = await getUserStruggle(authToken);
@@ -147,7 +139,6 @@ export default function HomeScreen({ navigation }: any) {
       const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
         "/affirmations/generate",
         {
-          values: userValues,
           sessionType,
           struggle: userStruggle,
           goal: trimmedInput, // User's written goal - most important input

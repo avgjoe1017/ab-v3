@@ -22,13 +22,38 @@ export interface TTSOptions {
 }
 
 /**
+ * Voice activity segment from TTS timestamp data
+ * Used for ducking (lowering background/binaural during speech)
+ */
+export interface TTSTimestamp {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Result of TTS generation with optional timing data
+ * When timestamps are available, we skip FFmpeg voice activity detection
+ */
+export interface TTSResult {
+  /** Duration of the generated audio in milliseconds */
+  durationMs: number;
+  /** Voice activity segments (when TTS provider supports timestamps) */
+  timestamps?: TTSTimestamp[];
+  /** Whether timestamps were extracted from TTS (vs FFmpeg fallback needed) */
+  hasTimestamps: boolean;
+}
+
+/**
  * Generate audio using the configured TTS provider
  * Falls back to beep generation if TTS is unavailable or fails
+ * 
+ * Returns TTSResult with optional timestamp data for voice activity detection.
+ * When timestamps are available, we skip FFmpeg silencedetect entirely.
  */
 export async function generateTTSAudio(
   options: TTSOptions,
   outputPath: string
-): Promise<void> {
+): Promise<TTSResult> {
   const provider = getTTSProvider();
   console.log(`[TTS] Using provider: ${provider}`);
 
@@ -36,32 +61,31 @@ export async function generateTTSAudio(
     switch (provider) {
       case "openai":
         console.log(`[TTS] Generating with OpenAI TTS...`);
-        await generateOpenAITTS(options, outputPath);
+        const openaiResult = await generateOpenAITTS(options, outputPath);
         console.log(`[TTS] ✅ OpenAI TTS generation complete`);
-        break;
+        return openaiResult;
       case "elevenlabs":
-        console.log(`[TTS] Generating with ElevenLabs TTS...`);
-        await generateElevenLabsTTS(options, outputPath);
-        console.log(`[TTS] ✅ ElevenLabs TTS generation complete`);
-        break;
+        console.log(`[TTS] Generating with ElevenLabs TTS (with timestamps)...`);
+        const elevenResult = await generateElevenLabsTTSWithTimestamps(options, outputPath);
+        console.log(`[TTS] ✅ ElevenLabs TTS generation complete (${elevenResult.hasTimestamps ? 'with' : 'without'} timestamps)`);
+        return elevenResult;
       case "azure":
         console.log(`[TTS] Generating with Azure TTS...`);
-        await generateAzureTTS(options, outputPath);
+        const azureResult = await generateAzureTTS(options, outputPath);
         console.log(`[TTS] ✅ Azure TTS generation complete`);
-        break;
+        return azureResult;
       case "beep":
       default:
         console.log(`[TTS] ⚠️  Using beep fallback (TTS not configured)`);
         console.log(`[TTS] To enable real TTS, add to apps/api/.env:`);
         console.log(`[TTS]   TTS_PROVIDER=openai`);
         console.log(`[TTS]   OPENAI_API_KEY=sk-your-key-here`);
-        await generateBeepFallback(options, outputPath);
-        break;
+        return await generateBeepFallback(options, outputPath);
     }
   } catch (error) {
     console.error(`[TTS] ❌ ${provider} failed:`, error);
     console.warn(`[TTS] Falling back to beep generation`);
-    await generateBeepFallback(options, outputPath);
+    return await generateBeepFallback(options, outputPath);
   }
 }
 
@@ -89,11 +113,12 @@ function getTTSProvider(): TTSProvider {
 /**
  * Generate TTS audio using OpenAI API
  * OpenAI TTS supports natural voices with prosody control
+ * Note: OpenAI TTS does not provide timestamps, so FFmpeg fallback is needed
  */
 async function generateOpenAITTS(
   options: TTSOptions,
   outputPath: string
-): Promise<void> {
+): Promise<TTSResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY not configured");
@@ -135,6 +160,15 @@ async function generateOpenAITTS(
 
   // Convert to MP3 with FFmpeg to match V3 audio profile (128kbps, 44.1kHz)
   await convertToMP3(outputPath);
+  
+  // Get duration from the generated file
+  const durationMs = await getAudioDurationMs(outputPath);
+  
+  // OpenAI TTS doesn't provide timestamps, so FFmpeg fallback is needed
+  return {
+    durationMs,
+    hasTimestamps: false,
+  };
 }
 
 /**
@@ -160,14 +194,17 @@ function mapVoiceIdToOpenAI(voiceId: string): string {
 }
 
 /**
- * Generate TTS audio using ElevenLabs API
+ * Generate TTS audio using ElevenLabs API WITH TIMESTAMPS
+ * Uses the "with-timestamps" endpoint to get word-level timing data.
+ * This eliminates the need for FFmpeg voice activity detection.
+ * 
  * ElevenLabs provides highly realistic voices with emotional control
  * Configured for slow, meditative, calming, ASMR-like delivery
  */
-async function generateElevenLabsTTS(
+async function generateElevenLabsTTSWithTimestamps(
   options: TTSOptions,
   outputPath: string
-): Promise<void> {
+): Promise<TTSResult> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     throw new Error("ELEVENLABS_API_KEY not configured");
@@ -184,8 +221,10 @@ async function generateElevenLabsTTS(
   const stability = options.variant === 1 ? 0.35 : 0.3;
   const similarityBoost = options.variant === 1 ? 0.6 : 0.55;
 
+  // Use the "with-timestamps" endpoint to get word-level timing
+  // API docs: https://elevenlabs.io/docs/api-reference/text-to-speech-with-timestamps
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
     {
       method: "POST",
       headers: {
@@ -201,22 +240,167 @@ async function generateElevenLabsTTS(
           style: 0.0, // Neutral style for calm affirmations
           use_speaker_boost: false,
         },
-        // Slow, meditative speed (0.7-1.2 range, lower = slower)
-        speed: 0.75, // Slow, deliberate pace for meditative delivery
       }),
     }
   );
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`ElevenLabs TTS failed: ${response.status} ${error}`);
+    // If timestamps endpoint fails, fall back to regular endpoint
+    console.warn(`[TTS] ElevenLabs timestamps endpoint failed (${response.status}), falling back to standard API`);
+    return await generateElevenLabsTTSFallback(options, outputPath);
+  }
+
+  // Response is JSON with base64 audio and alignment data
+  const data = await response.json() as {
+    audio_base64: string;
+    alignment: {
+      characters: string[];
+      character_start_times_seconds: number[];
+      character_end_times_seconds: number[];
+    };
+  };
+
+  // Decode and save audio
+  const audioBuffer = Buffer.from(data.audio_base64, 'base64');
+  await fs.writeFile(outputPath, audioBuffer);
+
+  // Convert to MP3 with FFmpeg
+  await convertToMP3(outputPath);
+  
+  // Extract voice activity segments from character timing
+  // Group contiguous speech into segments (gaps > 150ms = new segment)
+  const timestamps = extractVoiceActivityFromAlignment(data.alignment);
+  
+  // Get total duration from the last character end time
+  const charEndTimes = data.alignment.character_end_times_seconds;
+  const durationMs = charEndTimes.length > 0 
+    ? Math.round(charEndTimes[charEndTimes.length - 1]! * 1000)
+    : await getAudioDurationMs(outputPath);
+
+  console.log(`[TTS] Extracted ${timestamps.length} voice activity segments from ElevenLabs timestamps`);
+  
+  return {
+    durationMs,
+    timestamps,
+    hasTimestamps: true,
+  };
+}
+
+/**
+ * Extract voice activity segments from ElevenLabs character alignment data
+ * Groups contiguous characters into speech segments, splitting on gaps > 150ms
+ */
+function extractVoiceActivityFromAlignment(alignment: {
+  characters: string[];
+  character_start_times_seconds: number[];
+  character_end_times_seconds: number[];
+}): TTSTimestamp[] {
+  const { characters, character_start_times_seconds, character_end_times_seconds } = alignment;
+  
+  if (characters.length === 0) return [];
+  
+  const segments: TTSTimestamp[] = [];
+  let segmentStart = character_start_times_seconds[0]! * 1000;
+  let segmentEnd = character_end_times_seconds[0]! * 1000;
+  
+  const GAP_THRESHOLD_MS = 150; // Gap > 150ms = new segment
+  
+  for (let i = 1; i < characters.length; i++) {
+    const charStart = character_start_times_seconds[i]! * 1000;
+    const charEnd = character_end_times_seconds[i]! * 1000;
+    const gap = charStart - segmentEnd;
+    
+    // Skip whitespace-only gaps that are small
+    const char = characters[i];
+    if (char && /\s/.test(char) && gap < GAP_THRESHOLD_MS) {
+      segmentEnd = charEnd;
+      continue;
+    }
+    
+    if (gap > GAP_THRESHOLD_MS) {
+      // Close current segment and start new one
+      if (segmentEnd - segmentStart >= 50) { // Min 50ms segment
+        segments.push({
+          startMs: Math.round(segmentStart),
+          endMs: Math.round(segmentEnd),
+        });
+      }
+      segmentStart = charStart;
+    }
+    
+    segmentEnd = charEnd;
+  }
+  
+  // Close final segment
+  if (segmentEnd - segmentStart >= 50) {
+    segments.push({
+      startMs: Math.round(segmentStart),
+      endMs: Math.round(segmentEnd),
+    });
+  }
+  
+  return segments;
+}
+
+/**
+ * Fallback to standard ElevenLabs API (without timestamps)
+ * Used when the with-timestamps endpoint is unavailable
+ */
+async function generateElevenLabsTTSFallback(
+  options: TTSOptions,
+  outputPath: string
+): Promise<TTSResult> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    throw new Error("ELEVENLABS_API_KEY not configured");
+  }
+
+  const voiceId = mapVoiceIdToElevenLabs(options.voiceId);
+  const stability = options.variant === 1 ? 0.35 : 0.3;
+  const similarityBoost = options.variant === 1 ? 0.6 : 0.55;
+
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text: options.text,
+        model_id: "eleven_monolingual_v1",
+        voice_settings: {
+          stability,
+          similarity_boost: similarityBoost,
+          style: 0.0,
+          use_speaker_boost: false,
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    const errorMessage = `ElevenLabs TTS failed: ${response.status} ${error}`;
+    
+    // If fallback also fails, don't throw - let the outer catch handle beep fallback
+    // This prevents double fallback attempts
+    console.error(`[TTS] ${errorMessage}`);
+    throw new Error(errorMessage);
   }
 
   const audioBuffer = await response.arrayBuffer();
   await fs.writeFile(outputPath, Buffer.from(audioBuffer));
-
-  // Convert to MP3 with FFmpeg
   await convertToMP3(outputPath);
+  
+  const durationMs = await getAudioDurationMs(outputPath);
+  
+  return {
+    durationMs,
+    hasTimestamps: false, // FFmpeg fallback needed
+  };
 }
 
 /**
@@ -245,11 +429,12 @@ function mapVoiceIdToElevenLabs(voiceId: string): string {
 /**
  * Generate TTS audio using Azure Cognitive Services
  * Azure provides neural voices with SSML support
+ * Note: Azure TTS does not provide timestamps in this implementation
  */
 async function generateAzureTTS(
   options: TTSOptions,
   outputPath: string
-): Promise<void> {
+): Promise<TTSResult> {
   const apiKey = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
   
@@ -312,6 +497,13 @@ async function generateAzureTTS(
   
   // Azure already returns MP3, but ensure it matches V3 profile
   await convertToMP3(outputPath);
+  
+  const durationMs = await getAudioDurationMs(outputPath);
+  
+  return {
+    durationMs,
+    hasTimestamps: false, // Azure doesn't provide timestamps in this implementation
+  };
 }
 
 /**
@@ -332,11 +524,12 @@ function mapVoiceIdToAzure(voiceId: string): string {
 /**
  * Fallback: Generate beep file (original stub implementation)
  * Used when TTS is not configured or fails
+ * Returns synthetic timestamps for the beep duration
  */
 async function generateBeepFallback(
   options: TTSOptions,
   outputPath: string
-): Promise<void> {
+): Promise<TTSResult> {
   if (!ffmpegStatic) {
     throw new Error("ffmpeg-static not found");
   }
@@ -344,6 +537,7 @@ async function generateBeepFallback(
   // Variant 1 = 440Hz, Variant 2 = 444Hz (Micro-variation simulation)
   const freq = options.variant === 1 ? 440 : 444;
   const durationSec = 1.5;
+  const durationMs = durationSec * 1000;
 
   await execFileAsync(ffmpegStatic, [
     "-f", "lavfi",
@@ -355,6 +549,63 @@ async function generateBeepFallback(
     "-y",
     outputPath
   ]);
+  
+  // Beep is "always speaking" - return single segment covering full duration
+  return {
+    durationMs,
+    timestamps: [{ startMs: 0, endMs: durationMs }],
+    hasTimestamps: true, // Synthetic but deterministic
+  };
+}
+
+/**
+ * Get audio file duration in milliseconds using FFprobe
+ */
+async function getAudioDurationMs(filePath: string): Promise<number> {
+  if (!ffmpegStatic) {
+    return 0;
+  }
+  
+  try {
+    // Use ffprobe (bundled with ffmpeg-static) to get duration
+    // FFprobe is usually at the same location as ffmpeg
+    const ffprobePath = ffmpegStatic.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
+    
+    // Try ffprobe first, fall back to ffmpeg with -i
+    try {
+      const { stdout } = await execFileAsync(ffprobePath, [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        filePath
+      ]);
+      const durationSec = parseFloat(stdout.trim());
+      if (!isNaN(durationSec)) {
+        return Math.round(durationSec * 1000);
+      }
+    } catch {
+      // ffprobe not available, use ffmpeg fallback
+    }
+    
+    // Fallback: Use ffmpeg -i to get duration from stderr
+    try {
+      await execFileAsync(ffmpegStatic, ["-i", filePath, "-f", "null", "-"]);
+    } catch (e: any) {
+      // FFmpeg writes info to stderr even on "error"
+      const stderr = e.stderr || "";
+      const match = stderr.match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (match && match[1] && match[2] && match[3]) {
+        const hours = parseInt(match[1], 10);
+        const minutes = parseInt(match[2], 10);
+        const seconds = parseFloat(match[3]);
+        return Math.round((hours * 3600 + minutes * 60 + seconds) * 1000);
+      }
+    }
+    
+    return 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**

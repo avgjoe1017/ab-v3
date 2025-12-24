@@ -21,3 +21,6 @@ if ($connection) {
 Write-Host "Starting server on port $Port..." -ForegroundColor Green
 pnpm -C apps/api dev
 
+
+
+

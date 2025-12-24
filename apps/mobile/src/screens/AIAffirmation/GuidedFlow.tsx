@@ -6,7 +6,7 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, TextInput, Alert, Pressable } from "react-native";
 import { useAuthToken } from "../../lib/auth";
-import { getUserValues, getUserStruggle } from "../../lib/values";
+import { getUserStruggle } from "../../lib/values";
 import { apiPost } from "../../lib/api";
 import type { SessionV3 } from "@ab/contracts";
 import { PrimaryButton, Chip } from "../../components";
@@ -48,16 +48,8 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
     try {
       setIsGuidedGenerating(true);
 
-      // Fetch user values and struggle
-      let userValues: string[] = [];
+      // Fetch user struggle
       let userStruggle: string | undefined;
-
-      try {
-        const valuesResponse = await getUserValues(authToken);
-        userValues = valuesResponse.values.map(v => v.valueText);
-      } catch (err) {
-        console.log("[AIAffirmation] Could not fetch user values");
-      }
 
       try {
         const struggleResponse = await getUserStruggle(authToken);
@@ -81,9 +73,9 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
       const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
         "/affirmations/generate",
         {
-          values: userValues,
           sessionType,
           struggle: userStruggle || (guidedContext || undefined),
+          goal: guidedGoal,
           count: guidedLength,
         },
         authToken
@@ -112,14 +104,6 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
     try {
       setIsRegenerating(true);
       // Regenerate only deleted count
-      let userValues: string[] = [];
-      try {
-        const valuesResponse = await getUserValues(authToken);
-        userValues = valuesResponse.values.map(v => v.valueText);
-      } catch (err) {
-        // Ignore
-      }
-
       const goalLower = guidedGoal.toLowerCase();
       let sessionType = "Meditate";
       if (goalLower.includes("focus") || goalLower.includes("work")) {
@@ -133,9 +117,9 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
       const response = await apiPost<{ affirmations: string[] }>(
         "/affirmations/generate",
         {
-          values: userValues,
           sessionType,
           struggle: guidedContext || undefined,
+          goal: guidedGoal,
           count: deletedCount,
         },
         authToken
@@ -166,14 +150,6 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
   const handleRegenerateAll = async () => {
     try {
       setIsRegenerating(true);
-      let userValues: string[] = [];
-      try {
-        const valuesResponse = await getUserValues(authToken);
-        userValues = valuesResponse.values.map(v => v.valueText);
-      } catch (err) {
-        // Ignore
-      }
-
       const goalLower = guidedGoal.toLowerCase();
       let sessionType = "Meditate";
       if (goalLower.includes("focus") || goalLower.includes("work")) {
@@ -187,9 +163,9 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
       const response = await apiPost<{ affirmations: string[] }>(
         "/affirmations/generate",
         {
-          values: userValues,
           sessionType,
           struggle: guidedContext || undefined,
+          goal: guidedGoal,
           count: guidedLength,
         },
         authToken

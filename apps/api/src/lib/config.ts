@@ -46,6 +46,13 @@ export function getPort(): number {
 }
 
 /**
+ * Get public base URL for asset links (optional, but recommended behind proxies)
+ */
+export function getPublicBaseUrl(): string | undefined {
+  return getEnvOptional("API_PUBLIC_BASE_URL");
+}
+
+/**
  * Configuration object for easy access
  */
 export const config = {
@@ -54,6 +61,7 @@ export const config = {
   isProduction: isProduction(),
   isDevelopment: isDevelopment(),
   port: getPort(),
+  publicBaseUrl: getPublicBaseUrl(),
   
   // Database
   databaseUrl: getEnvOptional("DATABASE_URL"),
@@ -84,5 +92,8 @@ export const config = {
   ttsProvider: getEnvOptional("TTS_PROVIDER", "beep"),
   openaiApiKey: getEnvOptional("OPENAI_API_KEY"),
   elevenlabsApiKey: getEnvOptional("ELEVENLABS_API_KEY"),
+
+  // Jobs
+  jobWorkerEnabled: getEnvOptional("JOB_WORKER_ENABLED", "true") !== "false",
 } as const;
 

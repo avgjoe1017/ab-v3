@@ -31,9 +31,11 @@ export class VoiceActivityDucker {
     private config: DuckingConfig;
     private backgroundMultiplier: number = 1.0;
     private binauralMultiplier: number = 1.0;
+    private currentSegmentIndex: number = 0; // Pointer optimization: O(1) instead of O(n)
 
     constructor(segments: VoiceActivitySegment[] = [], config: Partial<DuckingConfig> = {}) {
-        this.segments = segments;
+        // Sort segments by start time for pointer optimization
+        this.segments = [...segments].sort((a, b) => a.startMs - b.startMs);
         this.config = { ...DEFAULT_CONFIG, ...config };
         
         // Convert dB to linear multipliers
@@ -45,19 +47,37 @@ export class VoiceActivityDucker {
         // Initialize multipliers (will be smoothed)
         this.backgroundMultiplier = 1.0;
         this.binauralMultiplier = 1.0;
+        this.currentSegmentIndex = 0;
     }
 
     /**
      * Check if voice is active at given position (with lookahead)
+     * Optimized: Uses pointer to avoid linear scan (O(1) average case instead of O(n))
      */
     private isVoiceActive(positionMs: number): boolean {
         const checkPos = positionMs + this.config.lookaheadMs;
         
-        for (const segment of this.segments) {
+        // Advance pointer past segments we've already passed
+        while (this.currentSegmentIndex < this.segments.length) {
+            const segment = this.segments[this.currentSegmentIndex];
+            
+            // If we're past this segment, move to next
+            if (checkPos > segment.endMs) {
+                this.currentSegmentIndex++;
+                continue;
+            }
+            
+            // If we're before this segment, no match yet
+            if (checkPos < segment.startMs) {
+                return false;
+            }
+            
+            // We're inside this segment
             if (checkPos >= segment.startMs && checkPos <= segment.endMs) {
                 return true;
             }
         }
+        
         return false;
     }
 
@@ -95,5 +115,6 @@ export class VoiceActivityDucker {
     reset(): void {
         this.backgroundMultiplier = 1.0;
         this.binauralMultiplier = 1.0;
+        this.currentSegmentIndex = 0; // Reset pointer
     }
 }

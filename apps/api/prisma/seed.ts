@@ -2,7 +2,7 @@ import { UUID } from "@ab/contracts";
 import crypto from "crypto";
 import { prisma } from "../src/lib/db";
 import { pregenerateSilenceChunks } from "../src/services/audio/generation";
-import { getFrequencyForGoalTag } from "../src/services/session-frequency";
+import { getFrequencyForGoalTag } from "@ab/contracts";
 
 // Helper to compute affirmations hash (consistent with API logic)
 function computeAffirmationsHash(affirmations: readonly string[]): string {

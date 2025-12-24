@@ -168,7 +168,7 @@ When a user provides a written goal for their session, this is the PRIMARY focus
 - If the user writes "I want to feel more confident at work", create affirmations about workplace confidence
 - If the user writes "Sleep better tonight", create affirmations about restful sleep
 
-The session type and user values are secondary context. The written goal is the primary directive.
+The session type is secondary context. The written goal is the primary directive.
 
 ---
 

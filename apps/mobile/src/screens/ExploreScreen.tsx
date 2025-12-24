@@ -7,7 +7,7 @@ import { theme } from "../theme";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "../lib/api";
 import { getAudioEngine } from "@ab/audio-engine";
-import { getUniqueSessionGradients } from "../lib/sessionArt";
+import { getUniqueSessionGradients, SESSION_GRADIENTS } from "../lib/sessionArt";
 import { PLACEHOLDER_PROGRAMS, type Program } from "../types/program";
 import { getProgramCompletion } from "../storage/programProgress";
 
@@ -247,6 +247,7 @@ export default function ExploreScreen({ navigation }: any) {
                   <View style={styles.newArrivalIconContainer}>
                     <LinearGradient
                       colors={itemGradient.colors}
+                      locations={itemGradient.locations}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.newArrivalIconGradient}
@@ -341,14 +342,8 @@ function ProgramCard({ program, onPress }: ProgramCardProps) {
       onPress={onPress}
     >
       <LinearGradient
-        colors={
-          palette === "twilight" ? ["#8878a8", "#706090"] :
-          palette === "sage" ? ["#90b8a8", "#78a090"] :
-          palette === "honey" ? ["#d8c090", "#c8a870"] :
-          palette === "lavender" ? ["#b8a8d8", "#a090c0"] :
-          palette === "sky" ? ["#90a8c8", "#7890b0"] :
-          ["#a8a0b8", "#9088a0"]
-        }
+        colors={SESSION_GRADIENTS[palette]?.colors || SESSION_GRADIENTS.mist.colors}
+        locations={SESSION_GRADIENTS[palette]?.locations || SESSION_GRADIENTS.mist.locations}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.programCardGradient}
@@ -588,6 +583,12 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border.glass,
+    // Apple-like shadow: subtle opacity with increased blur
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    elevation: 2,
   },
   newArrivalPressed: {
     opacity: 0.8,

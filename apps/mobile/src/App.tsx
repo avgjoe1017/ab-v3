@@ -19,10 +19,10 @@ import {
 import HomeScreen from "./screens/HomeScreen";
 import ExploreScreen from "./screens/ExploreScreen";
 import PlayerScreen from "./screens/PlayerScreen";
+import AudioGenerationLoadingScreen from "./screens/AudioGenerationLoadingScreen";
 import EditorScreen from "./screens/EditorScreen";
 import AIAffirmationScreen from "./screens/AIAffirmationScreen";
 import SOSScreen from "./screens/SOSScreen";
-import ProgramsListScreen from "./screens/ProgramsListScreen";
 import ProgramDetailScreen from "./screens/ProgramDetailScreen";
 import LibraryScreen from "./screens/LibraryScreen";
 import SessionDetailScreen from "./screens/SessionDetailScreen";
@@ -31,9 +31,10 @@ import SettingsScreen from "./screens/SettingsScreen";
 import { useProgramTracking } from "./hooks/useProgramTracking";
 import { useRecentTracking } from "./hooks/useRecentTracking";
 import { isOnboardingComplete } from "./storage/onboarding";
-import { getClerkPublishableKey } from "./lib/auth";
+import { getClerkPublishableKey, useAuthToken } from "./lib/auth";
 import { initializeRevenueCat } from "./lib/revenuecat";
 import { theme } from "./theme";
+import { setAuthToken } from "./lib/api";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -172,6 +173,7 @@ function MainApp() {
         {/* Detail screens */}
         <Stack.Screen name="Editor" component={AIAffirmationScreen} options={{ headerShown: false }} />
         <Stack.Screen name="EditorLegacy" component={EditorScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AudioGenerationLoading" component={AudioGenerationLoadingScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Player" component={PlayerScreen} options={{ headerShown: false }} />
         <Stack.Screen name="SOS" component={SOSScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ProgramDetail" component={ProgramDetailScreen} options={{ headerShown: false }} />
@@ -180,6 +182,43 @@ function MainApp() {
       </Stack.Navigator>
     </NavigationContainer>
   );
+}
+
+type AppContentProps = {
+  showOnboarding: boolean;
+  onOnboardingComplete: () => void;
+};
+
+function AppContent({ showOnboarding, onOnboardingComplete }: AppContentProps) {
+  return (
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        {showOnboarding ? (
+          <OnboardingFlow onComplete={onOnboardingComplete} />
+        ) : (
+          <MainApp />
+        )}
+      </QueryClientProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function AppContentWithAuth(props: AppContentProps) {
+  const authToken = useAuthToken();
+
+  React.useEffect(() => {
+    setAuthToken(authToken);
+  }, [authToken]);
+
+  return <AppContent {...props} />;
+}
+
+function AppContentWithoutAuth(props: AppContentProps) {
+  React.useEffect(() => {
+    setAuthToken(null);
+  }, []);
+
+  return <AppContent {...props} />;
 }
 
 export default function App() {
@@ -215,28 +254,23 @@ export default function App() {
     return null;
   }
 
-  // Wrap app with ClerkProvider if publishable key is available
-  const appContent = (
-    <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
-        {showOnboarding ? (
-          <OnboardingFlow onComplete={handleOnboardingComplete} />
-        ) : (
-          <MainApp />
-        )}
-      </QueryClientProvider>
-    </SafeAreaProvider>
-  );
-
   // If Clerk key is configured, wrap with ClerkProvider
   if (clerkPublishableKey) {
     return (
       <ClerkProvider publishableKey={clerkPublishableKey}>
-        {appContent}
+        <AppContentWithAuth
+          showOnboarding={showOnboarding}
+          onOnboardingComplete={handleOnboardingComplete}
+        />
       </ClerkProvider>
     );
   }
 
   // Otherwise, render without Clerk (development mode)
-  return appContent;
+  return (
+    <AppContentWithoutAuth
+      showOnboarding={showOnboarding}
+      onOnboardingComplete={handleOnboardingComplete}
+    />
+  );
 }

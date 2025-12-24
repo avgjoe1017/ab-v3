@@ -6,7 +6,7 @@
  */
 
 import { prisma } from "../src/lib/db";
-import { getFrequencyForGoalTag } from "../src/services/session-frequency";
+import { getFrequencyForGoalTag } from "@ab/contracts";
 
 async function main() {
     console.log("🔄 Backfilling session frequencies...\n");

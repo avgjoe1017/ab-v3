@@ -84,5 +84,11 @@ OPENAI_API_KEY=sk-...  # Required for affirmation generation
 ELEVENLABS_API_KEY=...  # Optional, falls back to beep TTS
 ```
 
+**Optional (useful in production/proxy setups)**:
+```bash
+API_PUBLIC_BASE_URL=https://api.example.com  # Base URL used in asset links
+JOB_WORKER_ENABLED=false  # Disable in-process job worker if using separate worker
+```
+
 ## V3 Architecture Spec
 See `docs/V3_ARCHITECTURE.md`.

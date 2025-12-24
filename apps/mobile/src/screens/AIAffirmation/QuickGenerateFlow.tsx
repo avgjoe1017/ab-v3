@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, TextInput, Pressable, Alert } from "react-native";
 import { useAuthToken } from "../../lib/auth";
-import { getUserValues, getUserStruggle } from "../../lib/values";
+import { getUserStruggle } from "../../lib/values";
 import { apiPost } from "../../lib/api";
 import type { SessionV3 } from "@ab/contracts";
 import { PrimaryButton } from "../../components";
@@ -53,16 +53,8 @@ export function QuickGenerateFlow({ navigation }: QuickGenerateFlowProps) {
       setIsQuickGenerating(true);
       setQuickGoal(goal); // Ensure state is set
 
-      // Fetch user values and struggle
-      let userValues: string[] = [];
+      // Fetch user struggle
       let userStruggle: string | undefined;
-
-      try {
-        const valuesResponse = await getUserValues(authToken);
-        userValues = valuesResponse.values.map(v => v.valueText);
-      } catch (err) {
-        console.log("[AIAffirmation] Could not fetch user values");
-      }
 
       try {
         const struggleResponse = await getUserStruggle(authToken);
@@ -86,7 +78,6 @@ export function QuickGenerateFlow({ navigation }: QuickGenerateFlowProps) {
       const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
         "/affirmations/generate",
         {
-          values: userValues,
           sessionType,
           struggle: userStruggle || quickContext || undefined,
           goal: goal, // User's written goal - most important input

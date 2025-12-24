@@ -11,6 +11,41 @@ export async function createJob(type: string, payload: any): Promise<Job> {
     });
 }
 
+/**
+ * Find or create a job for a given session (idempotent)
+ * Returns existing pending/processing job if one exists, otherwise creates new one
+ */
+export async function findOrCreateJobForSession(
+    type: string, 
+    sessionId: string,
+    payload?: any
+): Promise<Job> {
+    // Check for existing pending or processing job for this session
+    const existingJobs = await prisma.job.findMany({
+        where: {
+            type,
+            status: { in: ["pending", "processing"] },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 25,
+    });
+
+    // Parse payload to check sessionId match precisely
+    for (const job of existingJobs) {
+        try {
+            const jobPayload = JSON.parse(job.payload);
+            if (jobPayload.sessionId === sessionId) {
+                return job; // Return existing job
+            }
+        } catch {
+            // If payload parsing fails, continue to next job
+        }
+    }
+
+    // No existing job found, create new one
+    return createJob(type, payload || { sessionId });
+}
+
 export async function getJob(id: string): Promise<Job | null> {
     return prisma.job.findUnique({ where: { id } });
 }
@@ -21,13 +56,22 @@ export async function updateJobStatus(
     result?: any,
     error?: string
 ) {
+    const updateData: any = {
+        status,
+        result: result ? JSON.stringify(result) : undefined,
+        error,
+    };
+
+    // Track timing
+    if (status === "processing") {
+        updateData.startedAt = new Date();
+    } else if (status === "completed" || status === "failed") {
+        updateData.finishedAt = new Date();
+    }
+
     await prisma.job.update({
         where: { id },
-        data: {
-            status,
-            result: result ? JSON.stringify(result) : undefined,
-            error,
-        },
+        data: updateData,
     });
 }
 
@@ -102,9 +146,18 @@ async function reclaimStaleJobs(): Promise<void> {
     }
 }
 
-// Polling worker loop - picks up pending jobs and processes them
+// ============================================================================
+// CONCURRENT JOB WORKER
+// Allows N jobs to run in parallel instead of blocking on a single job.
+// This prevents one slow audio generation from blocking other users.
+// ============================================================================
+
 let workerInterval: ReturnType<typeof setInterval> | null = null;
-let isProcessing = false; // Prevent concurrent processing
+
+// Concurrency control - allows N jobs to run in parallel
+const MAX_CONCURRENT_JOBS = 3; // Tune based on server resources (TTS API rate limits, CPU for FFmpeg)
+let activeJobCount = 0;
+const activeJobIds = new Set<string>(); // Track which jobs are running to avoid double-processing
 
 export async function startJobWorker(intervalMs: number = 2000): Promise<void> {
     if (workerInterval) {
@@ -112,40 +165,73 @@ export async function startJobWorker(intervalMs: number = 2000): Promise<void> {
         return;
     }
 
-    console.log(`[Jobs] Starting worker (polling every ${intervalMs}ms)`);
+    console.log(`[Jobs] Starting worker (polling every ${intervalMs}ms, max ${MAX_CONCURRENT_JOBS} concurrent)`);
     
     // Reclaim stale jobs on startup
     await reclaimStaleJobs();
 
     workerInterval = setInterval(async () => {
-        if (isProcessing) {
-            return; // Skip if already processing
+        // Check if we have capacity for more jobs
+        if (activeJobCount >= MAX_CONCURRENT_JOBS) {
+            return; // At capacity, wait for a slot
         }
 
         try {
-            isProcessing = true;
-
             // Reclaim stale jobs periodically (every 10 iterations = ~20 seconds)
             if (Math.random() < 0.1) {
                 await reclaimStaleJobs();
             }
 
-            // Find next pending job
-            const pendingJob = await prisma.job.findFirst({
-                where: { status: "pending" },
-                orderBy: { createdAt: "asc" }
+            // Calculate how many jobs we can start
+            const availableSlots = MAX_CONCURRENT_JOBS - activeJobCount;
+            if (availableSlots <= 0) return;
+
+            // Find pending jobs (up to available slots)
+            const pendingJobs = await prisma.job.findMany({
+                where: { 
+                    status: "pending",
+                    // Exclude jobs we're already processing (race condition protection)
+                    id: { notIn: Array.from(activeJobIds) }
+                },
+                orderBy: { createdAt: "asc" },
+                take: availableSlots,
             });
 
-            if (pendingJob) {
-                console.log(`[Jobs] Processing job ${pendingJob.id} (${pendingJob.type})`);
-                await processJob(pendingJob);
+            // Start each job (fire and forget - they run concurrently)
+            for (const job of pendingJobs) {
+                // Double-check we haven't already started this job
+                if (activeJobIds.has(job.id)) continue;
+                
+                // Mark as active BEFORE starting to prevent race conditions
+                activeJobIds.add(job.id);
+                activeJobCount++;
+                
+                console.log(`[Jobs] Starting job ${job.id} (${job.type}) [${activeJobCount}/${MAX_CONCURRENT_JOBS} active]`);
+                
+                // Process job asynchronously (don't await - run in parallel)
+                processJobWithConcurrency(job).catch((error) => {
+                    console.error(`[Jobs] Unexpected error in job ${job.id}:`, error);
+                });
             }
         } catch (error) {
             console.error("[Jobs] Worker error:", error);
-        } finally {
-            isProcessing = false;
         }
     }, intervalMs);
+}
+
+/**
+ * Process a job with proper concurrency tracking
+ * Decrements activeJobCount when done (success or failure)
+ */
+async function processJobWithConcurrency(job: Job): Promise<void> {
+    try {
+        await processJob(job);
+    } finally {
+        // Always clean up, even on error
+        activeJobIds.delete(job.id);
+        activeJobCount--;
+        console.log(`[Jobs] Job ${job.id} finished [${activeJobCount}/${MAX_CONCURRENT_JOBS} active]`);
+    }
 }
 
 export function stopJobWorker(): void {

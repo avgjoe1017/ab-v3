@@ -5,40 +5,48 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { theme } from "../theme";
 
 // Preset color palettes for duotone cards
+// Mesh-style gradient palettes - softer, multi-point blends (Apple-inspired)
 export const DUOTONE_PALETTES = {
   // Lavender - primary brand color
   lavender: {
-    background: ["#b8a8d8", "#a090c0"] as [string, string],
+    background: ["#c8b8e8", "#b8a8d8", "#a090c0", "#9888b8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.7, 1] as [number, number, number, number],
     icon: "#d8c8f0",
   },
   // Sage - calm, grounding
   sage: {
-    background: ["#90b8a8", "#78a090"] as [string, string],
+    background: ["#a0c8b8", "#90b8a8", "#78a090", "#88a098"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     icon: "#b8dcd0",
   },
   // Sky - clarity, focus
   sky: {
-    background: ["#90a8c8", "#7890b0"] as [string, string],
+    background: ["#a0b8d8", "#90a8c8", "#7890b0", "#8098b8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     icon: "#b8d0f0",
   },
   // Rose - warmth, self-compassion
   rose: {
-    background: ["#c8a0b0", "#b08898"] as [string, string],
+    background: ["#d8b0c0", "#c8a0b0", "#b08898", "#b890a0"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     icon: "#e8c8d8",
   },
   // Honey - energy, warmth
   honey: {
-    background: ["#d8c090", "#c8a870"] as [string, string],
+    background: ["#e8d0a0", "#d8c090", "#c8a870", "#d0b080"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     icon: "#f0e0b8",
   },
   // Twilight - evening, rest
   twilight: {
-    background: ["#8878a8", "#706090"] as [string, string],
+    background: ["#9888b8", "#8878a8", "#706090", "#786898"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     icon: "#b0a0c8",
   },
   // Mist - neutral, subtle
   mist: {
-    background: ["#a8a0b8", "#9088a0"] as [string, string],
+    background: ["#b8b0c8", "#a8a0b8", "#9088a0", "#9890a8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     icon: "#c8c0d8",
   },
 } as const;
@@ -94,11 +102,13 @@ export const DuotoneCard: React.FC<DuotoneCardProps> = ({
 }) => {
   const paletteConfig = DUOTONE_PALETTES[palette];
   const bgColors = backgroundColors || paletteConfig.background;
+  const bgLocations = backgroundColors ? undefined : paletteConfig.locations; // Only use locations for palette gradients
   const graphicColor = iconColor || paletteConfig.icon;
 
   const content = (
     <LinearGradient
       colors={bgColors}
+      locations={bgLocations}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.container, { height }, style]}

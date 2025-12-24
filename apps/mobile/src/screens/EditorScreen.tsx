@@ -4,7 +4,7 @@ import { useDraftStore } from "../state/useDraftStore";
 import { apiPost } from "../lib/api";
 import { SessionV3Schema, type SessionV3 } from "@ab/contracts";
 import { useAuthToken } from "../lib/auth";
-import { getUserValues, getUserStruggle } from "../lib/values";
+import { getUserStruggle } from "../lib/values";
 
 export default function EditorScreen({ navigation }: any) {
     const { draft, updateDraft, addAffirmation, removeAffirmation, clearDraft } = useDraftStore();
@@ -60,7 +60,6 @@ export default function EditorScreen({ navigation }: any) {
             const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
                 "/affirmations/generate",
                 {
-                    values: userValues,
                     sessionType,
                     struggle: userStruggle,
                     goal: draft.title.trim(), // User's written goal - this is the most important input

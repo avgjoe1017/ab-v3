@@ -13,3 +13,18 @@ apps/api/prisma/dev.db
 apps/api/prisma/dev.db-journal
 .bun
 *.mp3
+
+# Storage and generated files (should not be committed)
+apps/api/storage/**
+apps/api/storage/
+!apps/api/storage/.gitkeep
+
+# Cache directories
+**/.expo/
+
+# Log files
+**/*.log
+**/*_errors.log
+bg-api*.log
+verify.log
+tsc*.log

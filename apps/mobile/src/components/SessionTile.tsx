@@ -56,13 +56,21 @@ export const SessionTile: React.FC<SessionTileProps> = ({
     >
       <View
         style={[
-          styles.imageContainer,
-          isCompact && styles.imageContainerCompact,
-          isLarge && styles.imageContainerLarge,
+          styles.imageContainerShadow,
+          isCompact && styles.imageContainerShadowCompact,
+          isLarge && styles.imageContainerShadowLarge,
         ]}
       >
-        <LinearGradient
+        <View
+          style={[
+            styles.imageContainer,
+            isCompact && styles.imageContainerCompact,
+            isLarge && styles.imageContainerLarge,
+          ]}
+        >
+          <LinearGradient
           colors={sessionGradient.colors}
+          locations={sessionGradient.locations}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.gradient}
@@ -104,6 +112,7 @@ export const SessionTile: React.FC<SessionTileProps> = ({
             </Pressable>
           )}
         </LinearGradient>
+        </View>
       </View>
       <View style={styles.content}>
         <Text
@@ -149,14 +158,30 @@ const styles = StyleSheet.create({
     opacity: 0.9,
     transform: [{ scale: 0.98 }],
   },
-  imageContainer: {
+  imageContainerShadow: {
     width: "100%",
     aspectRatio: 1,
+    // Apple-like shadow: subtle opacity with increased blur
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    elevation: 2,
+  },
+  imageContainerShadowCompact: {
+    aspectRatio: 1.2,
+  },
+  imageContainerShadowLarge: {
+    // No change needed, inherits from imageContainerShadow
+  },
+  imageContainer: {
+    width: "100%",
+    height: "100%",
     borderRadius: theme.radius.lg,
     overflow: "hidden",
   },
   imageContainerCompact: {
-    aspectRatio: 1.2,
+    // Aspect ratio controlled by shadow wrapper
   },
   imageContainerLarge: {
     borderRadius: theme.radius.xl,

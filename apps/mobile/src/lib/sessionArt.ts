@@ -6,34 +6,42 @@
 
 import { MaterialIcons } from "@expo/vector-icons";
 
-// Gradient palettes matching DuotoneCard system
+// Mesh-style gradient palettes - softer, multi-point blends (Apple-inspired)
+// Each palette uses 3-4 colors with intermediate stops for organic, mesh-like transitions
 export const SESSION_GRADIENTS = {
   lavender: {
-    colors: ["#b8a8d8", "#a090c0"] as [string, string],
+    colors: ["#c8b8e8", "#b8a8d8", "#a090c0", "#9888b8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.7, 1] as [number, number, number, number],
     iconColor: "#d8c8f0",
   },
   sage: {
-    colors: ["#90b8a8", "#78a090"] as [string, string],
+    colors: ["#a0c8b8", "#90b8a8", "#78a090", "#88a098"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     iconColor: "#b8dcd0",
   },
   sky: {
-    colors: ["#90a8c8", "#7890b0"] as [string, string],
+    colors: ["#a0b8d8", "#90a8c8", "#7890b0", "#8098b8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     iconColor: "#b8d0f0",
   },
   rose: {
-    colors: ["#c8a0b0", "#b08898"] as [string, string],
+    colors: ["#d8b0c0", "#c8a0b0", "#b08898", "#b890a0"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     iconColor: "#e8c8d8",
   },
   honey: {
-    colors: ["#d8c090", "#c8a870"] as [string, string],
+    colors: ["#e8d0a0", "#d8c090", "#c8a870", "#d0b080"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     iconColor: "#f0e0b8",
   },
   twilight: {
-    colors: ["#8878a8", "#706090"] as [string, string],
+    colors: ["#9888b8", "#8878a8", "#706090", "#786898"] as [string, string, string, string],
+    locations: [0, 0.35, 0.7, 1] as [number, number, number, number],
     iconColor: "#b0a0c8",
   },
   mist: {
-    colors: ["#a8a0b8", "#9088a0"] as [string, string],
+    colors: ["#b8b0c8", "#a8a0b8", "#9088a0", "#9890a8"] as [string, string, string, string],
+    locations: [0, 0.3, 0.75, 1] as [number, number, number, number],
     iconColor: "#c8c0d8",
   },
 } as const;
@@ -127,7 +135,8 @@ export function getSessionGradient(
   goalTag?: string | null
 ): {
   palette: SessionGradientPalette;
-  colors: [string, string];
+  colors: [string, string, string, string];
+  locations: [number, number, number, number];
   iconColor: string;
   icon: keyof typeof MaterialIcons.glyphMap;
 } {
@@ -171,12 +180,7 @@ export function getSessionGradient(
  */
 export function getUniqueSessionGradients<T extends { id: string; goalTag?: string | null }>(
   sessions: T[]
-): Map<string, {
-  palette: SessionGradientPalette;
-  colors: [string, string];
-  iconColor: string;
-  icon: keyof typeof MaterialIcons.glyphMap;
-}> {
+): Map<string, ReturnType<typeof getSessionGradient>> {
   const result = new Map<string, ReturnType<typeof getSessionGradient>>();
   const usedIcons = new Set<keyof typeof MaterialIcons.glyphMap>();
 

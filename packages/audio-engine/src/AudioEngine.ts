@@ -16,12 +16,44 @@ import { type PlaybackBundleVM } from "@ab/contracts";
 import type { AudioEngineSnapshot, Mix } from "./types";
 import { createAudioPlayer, type AudioPlayer } from "expo-audio";
 import { Platform } from "react-native";
+import { Asset } from "expo-asset";
 import { VoiceActivityDucker } from "./ducking";
 import { AudioSession } from "./AudioSession";
 import { waitForPlayerReady, waitForPlayersReady } from "./PlayerManager";
 import { PrerollManager } from "./PrerollManager";
 import { MixerController } from "./MixerController";
-import { correctDrift } from "./DriftCorrector";
+// Drift correction disabled - see DriftCorrector.ts for rationale
+
+/**
+ * Cache remote audio URIs locally to avoid network stalls during playback
+ * Uses expo-asset to download and cache HTTP/HTTPS URLs to local file:// URIs
+ * This eliminates "random" split-second dropouts from network buffering
+ * 
+ * NOTE: PlayerScreen already resolves bundled assets to local URIs, so this
+ * primarily handles cases where bundled resolution fails and we get S3/HTTP URLs.
+ */
+async function toCachedUri(uri: string): Promise<string> {
+  // If already local (file:// or bundled asset), return as-is (no caching needed)
+  if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
+    return uri;
+  }
+  
+  // Only cache remote URLs (S3, HTTP) - these can cause network buffering stalls
+  try {
+    const asset = Asset.fromURI(uri);
+    // Download if not already cached
+    if (!asset.localUri) {
+      console.log(`[AudioEngine] Caching remote asset (fallback from bundled resolution): ${uri.substring(0, 60)}...`);
+      await asset.downloadAsync();
+    }
+    // Return local URI (file://) for gapless playback
+    return asset.localUri ?? uri;
+  } catch (error) {
+    console.warn(`[AudioEngine] Failed to cache remote asset ${uri}, using remote (may cause buffering):`, error);
+    // Fallback to remote URI if caching fails
+    return uri;
+  }
+}
 
 /**
  * V3 Audio Engine
@@ -54,7 +86,7 @@ export class AudioEngine {
   // Position Polling (250ms for UI)
   private interval: ReturnType<typeof setInterval> | null = null;
   
-  // Control Tick Loop (25ms for mixer/ducking/smoothing)
+  // Control Tick Loop (75ms for mixer/ducking/smoothing - reduced from 25ms for performance)
   private controlInterval: ReturnType<typeof setInterval> | null = null;
   
   // Current bundle
@@ -68,9 +100,24 @@ export class AudioEngine {
   // Drift correction
   private lastDriftCheck: number = 0;
   
-  // Track last restart attempts to avoid spamming play() calls
-  private lastBinRestartAttempt: number = 0;
-  private lastBgRestartAttempt: number = 0;
+  // UNIFIED PLAYBACK WATCHDOG
+  // Instead of multiple restart mechanisms fighting each other, we use a single
+  // debounced watchdog that only restarts if player is *persistently* stopped.
+  // This prevents transient state flickers from causing micro-disruptions.
+  
+  // Track when each player was first detected as stopped (0 = not stopped)
+  private affStoppedAt: number = 0;
+  private binStoppedAt: number = 0;
+  private bgStoppedAt: number = 0;
+  
+  // Track last known position for each player (to detect if playback is advancing)
+  private affLastPosition: number = 0;
+  private binLastPosition: number = 0;
+  private bgLastPosition: number = 0;
+  
+  // Debounce threshold: only restart if stopped for this long (ms)
+  // This prevents reacting to transient expo-audio state flickers
+  private static readonly WATCHDOG_DEBOUNCE_MS = 400;
 
   constructor() {
     console.log("[AudioEngine] BUILD PROOF:", AudioEngine.BUILD_PROOF);
@@ -137,15 +184,16 @@ export class AudioEngine {
   }
 
   /**
-   * Start control tick loop (25ms) for mixer, ducking, smoothing
+   * Start control tick loop (75ms) for mixer, ducking, smoothing
    * Runs only when preroll or playing
+   * Reduced from 25ms to 75ms to reduce CPU spikes and audio-thread contention in React Native
    */
   private startControlLoop() {
     if (this.controlInterval) return; // Already running
     
     this.controlInterval = setInterval(() => {
       this.controlTick();
-    }, 25); // 40 Hz control rate
+    }, 75); // ~13 Hz control rate (reduced from 40 Hz for better performance)
   }
 
   private stopControlLoop() {
@@ -157,7 +205,7 @@ export class AudioEngine {
 
   /**
    * Control tick - delegates to MixerController
-   * Called every 25ms when playing or prerolling
+   * Called every 75ms when playing or prerolling (reduced from 25ms for performance)
    */
   private controlTick(): void {
     const status = this.snapshot.status;
@@ -191,44 +239,115 @@ export class AudioEngine {
       this.setState({ status: "playing" });
     }
 
-    // Ensure players stay playing (handle buffering gaps)
-    // Check if players stopped playing unexpectedly (due to buffering or other issues)
-    // Only check every 500ms to avoid spamming play() calls
+    // UNIFIED PLAYBACK WATCHDOG
+    // Single source of truth for player recovery. Only restarts if player is *persistently* stopped.
+    // This prevents transient expo-audio state flickers from causing micro-disruptions.
     const now = Date.now();
     if (status === "playing") {
-      // Check binaural player (debounced - only try restart every 500ms)
-      if (this.binPlayer && !this.binPlayer.playing && this.binPlayer.duration > 0) {
-        if (now - this.lastBinRestartAttempt > 500) {
-          this.lastBinRestartAttempt = now;
-          // Player stopped but should be playing - likely due to buffering
-          console.warn("[AudioEngine] ⚠️  Binaural player stopped unexpectedly - restarting");
-          this.binPlayer.play().catch(err => {
-            console.error("[AudioEngine] Error restarting binaural player:", err);
-          });
+      // Helper: Check if player is truly stopped (buffer-aware, EOF-aware, debounced)
+      // expo-audio doesn't auto-rewind at EOF - must seekTo(0) before replay
+      // Also ignore buffering states to avoid false positives
+      const checkAndRestartPlayer = (
+        player: AudioPlayer | null,
+        name: string,
+        stoppedAt: number,
+        lastPosition: number,
+        setStoppedAt: (t: number) => void,
+        setLastPosition: (p: number) => void
+      ) => {
+        if (!player || player.duration <= 0) return;
+        
+        // Check buffering state (expo-audio exposes this via status)
+        // If buffering, do nothing - this is normal and will resolve
+        const status = (player as any).status;
+        const isBuffering = status?.isBuffering === true;
+        if (isBuffering) {
+          // Buffering is normal - reset timer and update position
+          if (stoppedAt !== 0) setStoppedAt(0);
+          setLastPosition(player.currentTime);
+          return;
         }
-      }
+        
+        const currentPos = player.currentTime;
+        const duration = player.duration;
+        const isAtEOF = duration > 0 && currentPos >= duration - 0.1; // Within 100ms of end
+        
+        // Check if position is advancing (player is actually playing)
+        const isAdvancing = Math.abs(currentPos - lastPosition) > 0.01; // 10ms tolerance
+        
+        if (player.playing && isAdvancing) {
+          // Playing and advancing - reset stopped timer
+          if (stoppedAt !== 0) setStoppedAt(0);
+          setLastPosition(currentPos);
+          return;
+        }
+        
+        // Not playing or not advancing - start or check debounce timer
+        if (stoppedAt === 0) {
+          // First time seeing it stopped - start timer
+          setStoppedAt(now);
+          setLastPosition(currentPos);
+          return;
+        }
+        
+        // Check if it's been stopped long enough AND position hasn't advanced (truly stuck)
+        const stoppedDuration = now - stoppedAt;
+        if (stoppedDuration >= AudioEngine.WATCHDOG_DEBOUNCE_MS && !isAdvancing) {
+          console.warn(`[AudioEngine] ⚠️  ${name} persistently stopped for ${stoppedDuration}ms (pos: ${currentPos.toFixed(2)}s/${duration.toFixed(2)}s, EOF: ${isAtEOF}) - restarting`);
+          setStoppedAt(0); // Reset so we don't spam
+          setLastPosition(currentPos);
+          
+          // If at EOF, seekTo(0) first (expo-audio doesn't auto-rewind)
+          if (isAtEOF) {
+            player.seekTo(0).then(() => {
+              player.play().catch(err => {
+                console.error(`[AudioEngine] Error restarting ${name} after EOF seek:`, err);
+              });
+            }).catch(err => {
+              console.error(`[AudioEngine] Error seeking ${name} to 0:`, err);
+              // Try play anyway
+              player.play().catch(err2 => {
+                console.error(`[AudioEngine] Error restarting ${name}:`, err2);
+              });
+            });
+          } else {
+            // Not at EOF - just play
+            player.play().catch(err => {
+              console.error(`[AudioEngine] Error restarting ${name}:`, err);
+            });
+          }
+        } else {
+          // Update position even if not restarting (for next check)
+          setLastPosition(currentPos);
+        }
+      };
       
-      // Check background player (debounced - only try restart every 500ms)
-      if (this.bgPlayer && !this.bgPlayer.playing && this.bgPlayer.duration > 0) {
-        if (now - this.lastBgRestartAttempt > 500) {
-          this.lastBgRestartAttempt = now;
-          // Player stopped but should be playing - likely due to buffering
-          console.warn("[AudioEngine] ⚠️  Background player stopped unexpectedly - restarting");
-          this.bgPlayer.play().catch(err => {
-            console.error("[AudioEngine] Error restarting background player:", err);
-          });
-        }
-      }
+      // Check all three players with debouncing (buffer-aware, EOF-aware)
+      checkAndRestartPlayer(
+        this.affPlayer, "Affirmations", this.affStoppedAt, this.affLastPosition,
+        (t) => { this.affStoppedAt = t; },
+        (p) => { this.affLastPosition = p; }
+      );
+      checkAndRestartPlayer(
+        this.binPlayer, "Binaural", this.binStoppedAt, this.binLastPosition,
+        (t) => { this.binStoppedAt = t; },
+        (p) => { this.binLastPosition = p; }
+      );
+      checkAndRestartPlayer(
+        this.bgPlayer, "Background", this.bgStoppedAt, this.bgLastPosition,
+        (t) => { this.bgStoppedAt = t; },
+        (p) => { this.bgLastPosition = p; }
+      );
+    } else {
+      // Not playing - reset all stopped timers
+      this.affStoppedAt = 0;
+      this.binStoppedAt = 0;
+      this.bgStoppedAt = 0;
     }
 
-    // Drift correction (every 10 seconds - less frequent to avoid gaps)
-    // Skip drift correction for the first 30 seconds to avoid gaps during intro
-    const sessionStartTime = this.mixerController.getSessionStartTime();
-    const timeSinceStart = sessionStartTime > 0 ? Date.now() - sessionStartTime : Infinity;
-    if (status === "playing" && timeSinceStart > 30000 && Date.now() - this.lastDriftCheck > 10000) {
-      correctDrift(this.affPlayer, this.binPlayer, this.bgPlayer);
-      this.lastDriftCheck = Date.now();
-    }
+    // DISABLED: Drift correction removed (causes audible gaps)
+    // Beds don't need to be time-locked to affirmations - expo-audio handles looping natively
+    // See: packages/audio-engine/src/DriftCorrector.ts for rationale
   }
 
   load(bundle: PlaybackBundleVM): Promise<void> {
@@ -289,30 +408,25 @@ export class AudioEngine {
         return Platform.OS === "ios" ? asset.urlByPlatform.ios : asset.urlByPlatform.android;
       };
 
+      // Determine brain layer asset (binaural or solfeggio)
+      const bundleWithSolfeggio = bundle as PlaybackBundleVM & { solfeggio?: { urlByPlatform: { ios: string; android: string }; loop: true; hz: number } };
+      const brainLayerAsset = bundleWithSolfeggio.solfeggio || bundle.binaural;
+      if (!brainLayerAsset) {
+        throw new Error("PlaybackBundleVM must have either binaural or solfeggio");
+      }
+      const brainLayerType = bundleWithSolfeggio.solfeggio ? "solfeggio" : "binaural";
+
       try {
-        console.log("[AudioEngine] Loading Bundle:", bundle.sessionId);
+        console.log("[AudioEngine] Loading Bundle:", bundle.sessionId, `(brain layer: ${brainLayerType})`);
         const urls = {
           affirmations: bundle.affirmationsMergedUrl,
-          binaural: getUrl(bundle.binaural),
+          brainLayer: getUrl(brainLayerAsset),
           background: getUrl(bundle.background)
         };
         console.log("[AudioEngine] URLs:", urls);
 
-        // DEBUG: Test URL reachability before creating players
-        console.log("[AudioEngine] Testing URL reachability...");
-        for (const [name, url] of Object.entries(urls)) {
-          try {
-            console.log(`[AudioEngine] Testing ${name}: ${url}`);
-            const response = await fetch(url, { method: "HEAD" });
-            console.log(`[AudioEngine] ✅ ${name} reachable: ${response.status} ${response.statusText}`);
-            console.log(`[AudioEngine]    Content-Type: ${response.headers.get("content-type")}`);
-            console.log(`[AudioEngine]    Content-Length: ${response.headers.get("content-length")}`);
-          } catch (fetchError) {
-            console.error(`[AudioEngine] ❌ ${name} NOT reachable:`, fetchError);
-            console.error(`[AudioEngine]    URL was: ${url}`);
-          }
-        }
-        console.log("[AudioEngine] URL reachability test complete");
+        // Removed HEAD requests - let createAudioPlayer() + waitForPlayerReady() be the source of truth
+        // This removes 3 extra network calls and latency on device networks
 
         // 1. Create Players
         // Affirmations (Track A) - V3: Should loop infinitely per Loop-and-delivery.md
@@ -326,23 +440,30 @@ export class AudioEngine {
           throw new Error(`Failed to create affirmations player: ${err}`);
         }
 
-        // Binaural (Track B)
-        console.log("[AudioEngine] Creating binPlayer...");
+        // Brain Layer (Track B) - Binaural or Solfeggio
+        // CRITICAL: Force loop=true - don't trust bundle flags for bed tracks
+        // If loop is false/undefined, player hits EOF and pauses, causing gaps
+        // Also cache remote URIs locally to avoid network buffering stalls
+        console.log(`[AudioEngine] Creating binPlayer (${brainLayerType})...`);
         try {
-          this.binPlayer = createAudioPlayer({ uri: getUrl(bundle.binaural) });
-          this.binPlayer.loop = bundle.binaural.loop;
-          console.log("[AudioEngine] Created binPlayer successfully, loop:", this.binPlayer.loop);
+          const brainLayerUri = await toCachedUri(getUrl(brainLayerAsset));
+          this.binPlayer = createAudioPlayer({ uri: brainLayerUri });
+          this.binPlayer.loop = true; // Force loop - bed tracks must loop continuously
+          console.log(`[AudioEngine] Created binPlayer (${brainLayerType}) successfully, loop:`, this.binPlayer.loop, "cached:", brainLayerUri.startsWith("file://"));
         } catch (err) {
-          console.error("[AudioEngine] Failed to create binPlayer:", err);
-          throw new Error(`Failed to create binaural player: ${err}`);
+          console.error(`[AudioEngine] Failed to create binPlayer (${brainLayerType}):`, err);
+          throw new Error(`Failed to create ${brainLayerType} player: ${err}`);
         }
 
         // Background (Track C)
+        // CRITICAL: Force loop=true - don't trust bundle flags for bed tracks
+        // Also cache remote URIs locally to avoid network buffering stalls
         console.log("[AudioEngine] Creating bgPlayer...");
         try {
-          this.bgPlayer = createAudioPlayer({ uri: getUrl(bundle.background) });
-          this.bgPlayer.loop = bundle.background.loop;
-          console.log("[AudioEngine] Created bgPlayer successfully, loop:", this.bgPlayer.loop);
+          const bgUri = await toCachedUri(getUrl(bundle.background));
+          this.bgPlayer = createAudioPlayer({ uri: bgUri });
+          this.bgPlayer.loop = true; // Force loop - bed tracks must loop continuously
+          console.log("[AudioEngine] Created bgPlayer successfully, loop:", this.bgPlayer.loop, "cached:", bgUri.startsWith("file://"));
         } catch (err) {
           console.error("[AudioEngine] Failed to create bgPlayer:", err);
           throw new Error(`Failed to create background player: ${err}`);
@@ -366,120 +487,37 @@ export class AudioEngine {
           bg: this.bgPlayer.volume
         });
         
-        // Add listeners to binaural and background players to handle gapless looping and buffering
-        // Monitor for gaps during playback (especially around 30 seconds) caused by buffering issues
-        this.binPlayer.addListener("playbackStatusUpdate", (status) => {
-          if (status.isLoaded && status.duration && status.duration > 0) {
-            // Detect buffering state - if player stops playing due to buffering, restart it
-            const isBuffering = (status as any).isBuffering === true;
-            const shouldBePlaying = this.snapshot.status === "playing";
-            
-            // If we should be playing but player stopped, and it's due to buffering, restart
-            if (shouldBePlaying && !status.playing && isBuffering && this.binPlayer) {
-              console.warn("[AudioEngine] ⚠️  Binaural player stopped due to buffering - restarting playback");
-              this.binPlayer.play().catch(err => {
-                console.error("[AudioEngine] Error restarting binaural player after buffering:", err);
-              });
-            }
-            
-            // Handle didJustFinish - immediately seek to 0 to restart playback seamlessly
-            // This prevents gaps that occur when expo-audio's loop property doesn't work perfectly
-            // With loop=true, didJustFinish shouldn't normally fire, but if it does, we handle it
-            if (status.didJustFinish && this.binPlayer) {
-              // Immediately seek to 0 to restart the loop
-              this.binPlayer.seekTo(0);
-              // Ensure player continues playing (loop=true should handle this, but ensure it)
-              if (!this.binPlayer.playing) {
-                this.binPlayer.play().catch(err => {
-                  console.error("[AudioEngine] Error restarting binaural player after loop:", err);
-                });
-              }
-              console.log("[AudioEngine] Binaural loop transition - seeking to 0 to prevent gap");
-            }
-            
-            // Log buffering events for debugging (only occasionally to avoid spam)
-            if (isBuffering && Math.random() < 0.1) { // Log ~10% of buffering events
-              console.log("[AudioEngine] Binaural buffering - currentTime:", status.currentTime, "duration:", status.duration);
-            }
-          }
-        });
-        
-        this.bgPlayer.addListener("playbackStatusUpdate", (status) => {
-          if (status.isLoaded && status.duration && status.duration > 0) {
-            // Detect buffering state - if player stops playing due to buffering, restart it
-            const isBuffering = (status as any).isBuffering === true;
-            const shouldBePlaying = this.snapshot.status === "playing";
-            
-            // If we should be playing but player stopped, and it's due to buffering, restart
-            if (shouldBePlaying && !status.playing && isBuffering && this.bgPlayer) {
-              console.warn("[AudioEngine] ⚠️  Background player stopped due to buffering - restarting playback");
-              this.bgPlayer.play().catch(err => {
-                console.error("[AudioEngine] Error restarting background player after buffering:", err);
-              });
-            }
-            
-            // Handle didJustFinish - immediately seek to 0 to restart playback seamlessly
-            // This prevents gaps that occur when expo-audio's loop property doesn't work perfectly
-            // With loop=true, didJustFinish shouldn't normally fire, but if it does, we handle it
-            if (status.didJustFinish && this.bgPlayer) {
-              // Immediately seek to 0 to restart the loop
-              this.bgPlayer.seekTo(0);
-              // Ensure player continues playing (loop=true should handle this, but ensure it)
-              if (!this.bgPlayer.playing) {
-                this.bgPlayer.play().catch(err => {
-                  console.error("[AudioEngine] Error restarting background player after loop:", err);
-                });
-              }
-              console.log("[AudioEngine] Background loop transition - seeking to 0 to prevent gap");
-            }
-            
-            // Log buffering events for debugging (only occasionally to avoid spam)
-            if (isBuffering && Math.random() < 0.1) { // Log ~10% of buffering events
-              console.log("[AudioEngine] Background buffering - currentTime:", status.currentTime, "duration:", status.duration);
-            }
-          }
-        });
+        // REMOVED: Redundant playbackStatusUpdate listeners for binaural/background
+        // Recovery is now handled by the UNIFIED PLAYBACK WATCHDOG in controlTick()
+        // This prevents multiple mechanisms fighting each other and causing micro-disruptions.
+        // 
+        // expo-audio with loop=true handles looping automatically.
+        // The watchdog only intervenes if a player is *persistently* stopped (400ms+).
 
         // 3. Note: expo-audio loads files when play() is called, not when players are created
         // We can't wait for duration here since it won't be available until after play()
         console.log("[AudioEngine] Players created, will verify loading when play() is called");
 
-        // Listen for playback status updates to extract duration
-        // V3: Affirmations loop infinitely, so didJustFinish should not occur
-        // If it does, it indicates a looping issue - log warning but don't stop
+        // Listen for playback status updates - ONLY for duration extraction and error logging
+        // Recovery is handled by the UNIFIED PLAYBACK WATCHDOG in controlTick()
         this.affPlayer.addListener("playbackStatusUpdate", (status) => {
-          console.log("[AudioEngine] Affirmations playbackStatusUpdate:", {
-            isLoaded: status.isLoaded,
-            playing: status.playing,
-            duration: status.duration,
-            currentTime: status.currentTime,
-            error: (status as any).error,
-          });
-          
+          // Log errors
           if ((status as any).error) {
             console.error("[AudioEngine] ❌ Affirmations player error:", (status as any).error);
           }
           
           if (status.isLoaded) {
-            console.log("[AudioEngine] ✅ Affirmations player loaded:", {
-              duration: status.duration,
-              playing: status.playing,
-              loop: this.affPlayer?.loop
-            });
-            // V3 Compliance: Extract duration from player when loaded
-            // expo-audio status may have duration in seconds, convert to ms
-            if (status.duration !== undefined && status.duration > 0) {
+            // Extract duration from player when loaded (only once)
+            // expo-audio status has duration in seconds, convert to ms
+            if (status.duration !== undefined && status.duration > 0 && this.snapshot.durationMs === 0) {
               this.setState({ durationMs: status.duration * 1000 });
             }
             
-            // V3: With loop=true, didJustFinish should not fire. If it does, log warning
-            // Guard: Only log if duration is valid (prevents spurious triggers during buffering)
+            // Log if didJustFinish fires (shouldn't with loop=true, but useful for debugging)
             if (status.didJustFinish && status.duration && status.duration > 0) {
-              console.warn("[AudioEngine] ⚠️  Affirmations track finished but should loop! Loop property:", this.affPlayer?.loop, "Duration:", status.duration);
-              // Don't stop - the track should loop automatically. This is just a diagnostic.
+              console.warn("[AudioEngine] ⚠️  Affirmations didJustFinish fired (loop=true should prevent this)");
+              // Don't take action here - watchdog will restart if persistently stopped
             }
-          } else {
-            console.log("[AudioEngine] Affirmations player not loaded yet:", status);
           }
         });
 
@@ -692,12 +730,17 @@ export class AudioEngine {
           // Continue anyway - don't block other players
         }
         
-        // Brief pause before starting binaural (staggered start)
+        // Brief pause before starting brain layer (staggered start)
         await new Promise(resolve => setTimeout(resolve, 200));
         
-        console.log("[AudioEngine] Step 2: Starting binaural player...");
-        const binUrl = this.currentBundle && getUrl ? getUrl(this.currentBundle.binaural) : "unknown";
-        console.log("[AudioEngine] Binaural URL:", binUrl);
+        // Determine brain layer asset for logging
+        const currentBundle = this.currentBundle as any;
+        const brainLayerAsset = currentBundle?.solfeggio || currentBundle?.binaural;
+        const brainLayerType = currentBundle?.solfeggio ? "solfeggio" : "binaural";
+        
+        console.log(`[AudioEngine] Step 2: Starting ${brainLayerType} player...`);
+        const binUrl = this.currentBundle && brainLayerAsset && getUrl ? getUrl(brainLayerAsset) : "unknown";
+        console.log(`[AudioEngine] ${brainLayerType.charAt(0).toUpperCase() + brainLayerType.slice(1)} URL:`, binUrl);
         
         try {
           // Call play() to trigger loading
@@ -707,9 +750,9 @@ export class AudioEngine {
           
           // Wait for ready with shorter timeout
           try {
-            await waitForPlayerReady(this.binPlayer!, "Binaural", 5000); // Reduced to 5s
+            await waitForPlayerReady(this.binPlayer!, brainLayerType.charAt(0).toUpperCase() + brainLayerType.slice(1), 5000); // Reduced to 5s
           } catch (waitError) {
-            console.warn("[AudioEngine] ⚠️  Binaural waitForPlayerReady timed out, but continuing anyway");
+            console.warn(`[AudioEngine] ⚠️  ${brainLayerType.charAt(0).toUpperCase() + brainLayerType.slice(1)} waitForPlayerReady timed out, but continuing anyway`);
             // Don't wait - just continue
           }
           
@@ -720,15 +763,15 @@ export class AudioEngine {
           }
           
           if (this.binPlayer!.playing) {
-            console.log("[AudioEngine] ✅ Binaural started, intro automation will fade in over 4s (after 2s delay)");
+            console.log(`[AudioEngine] ✅ ${brainLayerType.charAt(0).toUpperCase() + brainLayerType.slice(1)} started, intro automation will fade in over 4s (after 2s delay)`);
           } else {
-            console.error("[AudioEngine] ❌ Binaural player failed to start after multiple attempts!");
+            console.error(`[AudioEngine] ❌ ${brainLayerType.charAt(0).toUpperCase() + brainLayerType.slice(1)} player failed to start after multiple attempts!`);
             console.error("[AudioEngine] Check if audio file exists and is accessible:", binUrl);
             // Continue anyway - control loop will handle it
-            console.warn("[AudioEngine] Continuing playback - binaural may start later");
+            console.warn(`[AudioEngine] Continuing playback - ${brainLayerType} may start later`);
           }
         } catch (error) {
-          console.error("[AudioEngine] ❌ Error starting binaural player:", error);
+          console.error(`[AudioEngine] ❌ Error starting ${brainLayerType} player:`, error);
           console.error("[AudioEngine] Audio file URL:", binUrl);
           // Continue anyway - don't block other players
         }
@@ -929,17 +972,12 @@ export class AudioEngine {
   seek(ms: number): Promise<void> {
     return this.enqueue(async () => {
       const sec = ms / 1000;
+      // Only seek affirmations player - bed tracks loop automatically and don't need seeking
+      // Seeking bed tracks causes audible gaps, and they're not time-locked to affirmations anyway
       this.affPlayer?.seekTo(sec);
-      // For looping tracks, we can seek them directly - the loop will handle wrapping
-      // If duration is known, use modulo to keep them in sync with the loop length
-      if (this.binPlayer) {
-        const binDuration = this.binPlayer.duration || 1;
-        this.binPlayer.seekTo(sec % binDuration);
-      }
-      if (this.bgPlayer) {
-        const bgDuration = this.bgPlayer.duration || 1;
-        this.bgPlayer.seekTo(sec % bgDuration);
-      }
+      
+      // DO NOT seek binaural/background players - they loop automatically with loop=true
+      // Seeking them causes audible gaps. expo-audio handles looping natively without seeking.
 
       this.setState({ positionMs: ms });
     });

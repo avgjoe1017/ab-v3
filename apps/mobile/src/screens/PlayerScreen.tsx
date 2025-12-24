@@ -3,11 +3,11 @@ import { View, Text, Pressable, StyleSheet, ScrollView, Platform } from "react-n
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiPost, ApiError } from "../lib/api";
 import { PlaybackBundleVMSchema, type PlaybackBundleVM } from "@ab/contracts";
 import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
 import Slider from "@react-native-community/slider";
-import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation, MicroVisualizer, LoudnessSparkline } from "../components";
+import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation, MicroVisualizer, LoudnessSparkline, Waveform } from "../components";
 import { theme } from "../theme";
 import { useSleepTimer } from "../hooks/useSleepTimer";
 import { saveMixPreset } from "../storage/mixPresets";
@@ -23,6 +23,12 @@ function formatSleepTimer(ms: number | null): string {
     return `${hours}h ${minutes}m`;
   }
   return `${minutes}m`;
+}
+
+function isAudioNotReadyError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.code === "AUDIO_NOT_READY";
+  if (err instanceof Error) return err.message.includes("AUDIO_NOT_READY");
+  return false;
 }
 
 export default function PlayerScreen({ route, navigation }: any) {
@@ -51,7 +57,7 @@ export default function PlayerScreen({ route, navigation }: any) {
         const bundle = PlaybackBundleVMSchema.parse(json.bundle);
         return bundle;
       } catch (err: any) {
-        if (err?.message?.includes("AUDIO_NOT_READY") || err?.message?.includes("Audio not generated")) {
+        if (err instanceof ApiError && err.code === "AUDIO_NOT_READY") {
           throw new Error("AUDIO_NOT_READY");
         }
         throw err;
@@ -123,10 +129,13 @@ export default function PlayerScreen({ route, navigation }: any) {
   const mix = snapshot.mix;
 
   // Auto-load and auto-play when bundle data is available
+  // If audio is not ready, redirect to loading screen instead of showing error
   useEffect(() => {
     if (!data) {
-      if (error?.message === "AUDIO_NOT_READY" && !isGenerating) {
-        handleGenerateAudio();
+      if (isAudioNotReadyError(error) && !isGenerating) {
+        // Redirect to loading screen instead of generating inline
+        navigation.replace("AudioGenerationLoading", { sessionId });
+        return;
       }
       return;
     }
@@ -138,11 +147,11 @@ export default function PlayerScreen({ route, navigation }: any) {
     const needsLoad = isNewSession || isDifferentSession;
 
     if (needsLoad) {
-      // Resolve bundled assets (binaural/background) to local URIs for faster loading
+      // Resolve bundled assets (binaural/solfeggio/background) to local URIs for faster loading
       (async () => {
         try {
           const { resolveBundledAsset } = await import("../lib/bundledAssets");
-          const resolvedData = {
+          const resolvedData: any = {
             ...data,
             background: {
               ...data.background,
@@ -157,7 +166,25 @@ export default function PlayerScreen({ route, navigation }: any) {
                 ),
               },
             },
-            binaural: {
+          };
+          
+          // Resolve brain layer (binaural or solfeggio)
+          if (data.solfeggio) {
+            resolvedData.solfeggio = {
+              ...data.solfeggio,
+              urlByPlatform: {
+                ios: await resolveBundledAsset(
+                  Platform.OS === "ios" ? data.solfeggio.urlByPlatform.ios : data.solfeggio.urlByPlatform.android,
+                  "solfeggio"
+                ),
+                android: await resolveBundledAsset(
+                  Platform.OS === "android" ? data.solfeggio.urlByPlatform.android : data.solfeggio.urlByPlatform.ios,
+                  "solfeggio"
+                ),
+              },
+            };
+          } else if (data.binaural) {
+            resolvedData.binaural = {
               ...data.binaural,
               urlByPlatform: {
                 ios: await resolveBundledAsset(
@@ -169,8 +196,8 @@ export default function PlayerScreen({ route, navigation }: any) {
                   "binaural"
                 ),
               },
-            },
-          };
+            };
+          }
           
           engine.load(resolvedData).then(() => {
             setLastLoadedSessionId(currentSessionId);
@@ -206,9 +233,12 @@ export default function PlayerScreen({ route, navigation }: any) {
   const sessionTitle = sessionData?.title || "Deep Rest";
   const frequencyHz = sessionData?.frequencyHz;
   const brainwaveState = sessionData?.brainwaveState;
+  const solfeggioHz = sessionData?.solfeggioHz;
   
-  // Phase 4.1: Format frequency display
-  const frequencyDisplay = frequencyHz && brainwaveState
+  // Phase 4.1: Format frequency display (binaural or solfeggio)
+  const frequencyDisplay = solfeggioHz
+    ? `Solfeggio ${solfeggioHz}Hz`
+    : frequencyHz && brainwaveState
     ? `${brainwaveState} ${frequencyHz}Hz`
     : frequencyHz
     ? `${frequencyHz}Hz`
@@ -325,11 +355,11 @@ export default function PlayerScreen({ route, navigation }: any) {
             <View style={styles.errorContent}>
               <Text style={styles.errorTitle}>Audio Not Ready</Text>
               <Text style={styles.errorMessage}>
-                {error instanceof Error && error.message.includes("AUDIO_NOT_READY") 
+                {isAudioNotReadyError(error)
                   ? "Audio hasn't been generated yet. We'll generate it for you."
                   : error instanceof Error ? error.message : String(error)}
               </Text>
-              {error instanceof Error && error.message.includes("AUDIO_NOT_READY") && (
+              {isAudioNotReadyError(error) && (
                 <PrimaryButton
                   label={isGenerating ? "Generating..." : "Generate Audio"}
                   onPress={handleGenerateAudio}
@@ -354,13 +384,16 @@ export default function PlayerScreen({ route, navigation }: any) {
               )}
             </View>
 
-            {/* Audio Visualization - Micro Visualizer */}
+            {/* Audio Visualization - Waveform */}
             <View style={styles.audioVizContainer}>
-              <MicroVisualizer
-                barCount={30}
+              <Waveform
                 height={64}
                 color={theme.colors.accent.highlight}
+                cycles={2.5}
                 isPlaying={isPlaying || isPreroll}
+                amplitude={0.5}
+                speed={3000}
+                style={{ flex: 1, width: "100%" }}
               />
             </View>
 
@@ -462,15 +495,17 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.affirmations * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, affirmations: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor={theme.colors.border.default}
+                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
 
-                {/* Binaural */}
+                {/* Brain Layer (Binaural or Solfeggio) */}
                 <View style={styles.mixControl}>
                   <View style={styles.mixControlHeader}>
-                    <Text style={styles.mixControlLabel}>Binaural Frequency</Text>
+                    <Text style={styles.mixControlLabel}>
+                      {data?.solfeggio ? "Solfeggio Frequency" : "Binaural Frequency"}
+                    </Text>
                     <View style={styles.mixControlRight}>
                       <LoudnessSparkline
                         data={[10, 11, 10, 12, 11, 13, 12, 11, 10, 12]}
@@ -488,7 +523,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.binaural * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, binaural: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor={theme.colors.border.default}
+                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
@@ -514,7 +549,7 @@ export default function PlayerScreen({ route, navigation }: any) {
                     value={mix.background * 100}
                     onValueChange={(value) => engine.setMix({ ...mix, background: value / 100 })}
                     minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor={theme.colors.border.default}
+                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
                     thumbTintColor={theme.colors.accent.highlight}
                   />
                 </View>
@@ -704,17 +739,17 @@ const styles = StyleSheet.create({
     ...theme.shadows.glow.highlight,
   },
   mixPanel: {
-    backgroundColor: theme.colors.background.surface,
+    backgroundColor: "rgba(255, 255, 255, 0.85)", // High-blur glass effect
     borderRadius: theme.radius.xl,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: theme.colors.border.glass,
+    borderColor: "rgba(255, 255, 255, 0.7)", // More visible border for distinct layer
     // Soft frosted glass effect
     ...theme.shadows.glass,
   },
   mixPanelOpen: {
-    backgroundColor: theme.colors.background.surfaceElevated,
-    borderColor: "rgba(255, 255, 255, 0.6)",
+    backgroundColor: "rgba(255, 255, 255, 0.9)", // Slightly more opaque when open
+    borderColor: "rgba(255, 255, 255, 0.8)",
   },
   mixPanelHeader: {
     width: "100%",
@@ -763,7 +798,7 @@ const styles = StyleSheet.create({
   },
   slider: {
     width: "100%",
-    height: 40,
+    height: 24, // Reduced height for Apple-like compact feel
   },
   errorContainer: {
     flexDirection: "row",

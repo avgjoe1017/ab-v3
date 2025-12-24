@@ -8,7 +8,8 @@ export type ApiErrorCode =
   | "AUDIO_NOT_READY"
   | "ASSET_ERROR"
   | "INTERNAL_ERROR"
-  | "UNAUTHORIZED"; // Phase 6.1: Authentication errors
+  | "UNAUTHORIZED" // Phase 6.1: Authentication errors
+  | "RATE_LIMITED";
 
 export type ApiError = {
   code: ApiErrorCode;

@@ -2,7 +2,226 @@
 
 **Date**: January 2025
 **Status**: Core Architecture Complete & Hardened
-**Last Updated**: 2025-12-20 19:39:04 (Port Conflict Helper Scripts)
+**Last Updated**: 2025-12-24 07:09:00 (Content Moderation System Implementation)
+
+---
+
+## 2025-12-21 14:45:00 - TTS Timestamps (Skip FFmpeg Voice Activity Detection)
+
+### Summary
+Implemented timestamp-providing TTS using ElevenLabs "with-timestamps" API. When timestamps are available from TTS, we skip the FFmpeg `silencedetect` pass entirely - voice activity segments are built deterministically from character timing data.
+
+### Problem
+After audio stitching, we ran FFmpeg `silencedetect` on the merged file (~2-5 seconds) to identify speech segments for ducking. This was:
+- **Slow**: Extra FFmpeg pass on the entire audio file
+- **Inaccurate**: Guessing speech from audio analysis, not actual timing
+- **Redundant**: TTS providers already know exactly when speech occurs
+
+### Solution
+**Files Modified**:
+- `apps/api/src/services/audio/tts.ts` - Added timestamp extraction
+- `apps/api/src/services/audio/generation.ts` - Use TTS timestamps instead of FFmpeg
+
+### Key Changes
+
+#### 1. New Types for TTS Results
+```typescript
+interface TTSResult {
+  durationMs: number;
+  timestamps?: TTSTimestamp[];  // Voice activity from TTS
+  hasTimestamps: boolean;       // True = skip FFmpeg
+}
+```
+
+#### 2. ElevenLabs With-Timestamps API
+Uses `/v1/text-to-speech/{voice_id}/with-timestamps` endpoint:
+```typescript
+// Response includes character-level timing
+{
+  audio_base64: "...",
+  alignment: {
+    characters: ["H", "e", "l", "l", "o"],
+    character_start_times_seconds: [0.0, 0.1, 0.2, 0.3, 0.4],
+    character_end_times_seconds: [0.1, 0.2, 0.3, 0.4, 0.5]
+  }
+}
+```
+
+#### 3. Voice Activity From Timestamps
+Instead of FFmpeg silencedetect, we build segments from character timing:
+```typescript
+// Group contiguous characters into speech segments
+// Gap > 150ms = new segment
+function extractVoiceActivityFromAlignment(alignment) {
+  // Returns: [{ startMs: 0, endMs: 1200 }, { startMs: 1500, endMs: 2800 }, ...]
+}
+```
+
+#### 4. Fallback Chain
+- ElevenLabs with timestamps → **No FFmpeg needed** ✅
+- ElevenLabs without timestamps → FFmpeg fallback
+- OpenAI TTS → FFmpeg fallback (no timestamps API)
+- Azure TTS → FFmpeg fallback
+- Beep fallback → Synthetic timestamps (full coverage)
+
+### Performance Impact
+- **Skip 1 FFmpeg pass** (~2-5 seconds saved per audio generation)
+- **More accurate ducking** (TTS knows exactly when speech occurs)
+- **Cached in DB** (timestamps stored in `metaJson` for reuse)
+
+### Provider Support
+| Provider    | Timestamps | Notes |
+|-------------|------------|-------|
+| ElevenLabs  | ✅ Yes     | Uses with-timestamps endpoint |
+| OpenAI      | ❌ No      | FFmpeg fallback |
+| Azure       | ❌ No      | Could add SSML timing in future |
+| Beep (dev)  | ✅ Yes     | Synthetic (full audio = speech) |
+
+---
+
+## 2025-12-21 14:35:00 - Concurrent Job Worker
+
+### Summary
+Replaced single-threaded job worker with concurrent worker supporting N parallel jobs.
+
+### Problem
+```javascript
+let isProcessing = false; // Prevent concurrent processing
+```
+One slow audio generation job blocked ALL other users. If User A's 30-second TTS generation was running, User B had to wait.
+
+### Solution
+**File**: `apps/api/src/services/jobs.ts`
+
+Replaced boolean `isProcessing` with a semaphore pattern:
+- `MAX_CONCURRENT_JOBS = 3` (tunable based on TTS API rate limits and CPU)
+- `activeJobCount` tracks running jobs
+- `activeJobIds` Set prevents double-processing race conditions
+- Jobs now run in parallel (fire-and-forget from the polling loop)
+
+### Key Changes
+```javascript
+// Before: Boolean blocking
+if (isProcessing) return;
+isProcessing = true;
+await processJob(pendingJob);
+isProcessing = false;
+
+// After: Semaphore with parallel execution
+if (activeJobCount >= MAX_CONCURRENT_JOBS) return;
+const pendingJobs = await prisma.job.findMany({ take: availableSlots });
+for (const job of pendingJobs) {
+    activeJobCount++;
+    processJobWithConcurrency(job); // No await - runs in parallel
+}
+```
+
+### Impact
+- 3x throughput for multi-user scenarios
+- No blocking between users
+- Proper cleanup on job completion (success or failure)
+- Race condition protection via `activeJobIds` Set
+
+### Tuning
+Adjust `MAX_CONCURRENT_JOBS` based on:
+- TTS API rate limits (ElevenLabs/OpenAI)
+- Server CPU (FFmpeg stitching is CPU-bound)
+- Memory (each job holds audio buffers)
+
+For most setups, 2-4 is optimal. If using ElevenLabs with rate limits, stick to 2.
+
+---
+
+## 2025-12-21 14:27:53 - Audio Architecture Fixes (High Impact)
+
+### Summary
+Implemented comprehensive fixes based on deep code analysis. These changes address the root causes of binaural split-second cutouts and improve audio generation performance.
+
+### Changes Made
+
+#### 1. Fixed m4a vs mp3 Container Mismatch (Priority Fix)
+**Files**: `apps/api/src/services/audio/generation.ts`
+
+**Problem**: `AUDIO_PROFILE_V3` declares merged output as `.m4a` (AAC container), but S3 upload used `.mp3` extension and `audio/mpeg` content type. This caused inconsistent client behavior (range requests, decoders, caching).
+
+**Fix**: Updated S3 upload to use correct extension and content type:
+- S3 key now uses `AUDIO_PROFILE_V3.CONTAINER` (`.m4a`)
+- Content type now uses `audio/mp4` (correct for AAC in M4A container)
+- Applied to both new uploads and migration of existing files
+
+#### 2. Disabled Drift Correction for Binaural/Background Tracks
+**Files**: `packages/audio-engine/src/DriftCorrector.ts`
+
+**Problem**: Hard-seeking during playback caused audible micro-gaps. Drift correction was triggering on binaural/background tracks that don't need time-locking to affirmations.
+
+**Fix**: Disabled drift correction entirely for bed tracks:
+- Main `correctDrift()` function is now a no-op
+- Added new `correctDriftWithFade()` function for future use (only corrects when volume is near-zero)
+- expo-audio with `loop=true` handles looping natively without drift correction
+
+**Decision Rationale**: Beds don't need to be synchronized with affirmations for the experience to work. The ~200ms drift threshold was causing more problems than it solved.
+
+#### 3. Unified Playback Watchdog (Consolidated Resume Logic)
+**Files**: `packages/audio-engine/src/AudioEngine.ts`
+
+**Problem**: Three separate mechanisms were fighting each other to recover from playback stops:
+1. `controlTick()` checked `!player.playing` every 75ms
+2. `playbackStatusUpdate` listeners restarted immediately on every status update
+3. `didJustFinish` handlers also restarted
+
+These could fire simultaneously on transient state flickers (especially on Android), causing "random" micro-disruptions.
+
+**Fix**: Replaced all three with a single debounced watchdog:
+- **Debounce threshold**: 400ms (only restart if player is *persistently* stopped)
+- **Single source of truth**: Only `controlTick()` handles recovery
+- **Removed**: Redundant restart logic from `playbackStatusUpdate` listeners
+- **Retained**: Duration extraction from affirmations listener (needed for UI)
+
+**Key Insight**: expo-audio has known listener/update quirks on Android that multiply callbacks. The new debounce prevents reacting to transient state.
+
+#### 4. Parallelized TTS Generation + Hoisted ensureSilence
+**Files**: `apps/api/src/services/audio/generation.ts`
+
+**Problem**: `ensureSilence()` was called inside the loop for every affirmation chunk, causing repeated DB lookups and filesystem checks for the same two silence durations.
+
+**Fix**: 
+- Pre-compute silence chunks ONCE before the loop:
+  ```javascript
+  const [silenceBetweenReads, silenceAfterRead] = await Promise.all([
+    ensureSilence(SILENCE_BETWEEN_READS_MS),  // 1500ms
+    ensureSilence(FIXED_SILENCE_MS),           // 4000ms
+  ]);
+  ```
+- TTS chunks now generate in parallel (CONCURRENCY_LIMIT=6) without silence calls
+- Silence is interleaved after TTS generation completes
+
+**Performance Impact**: Removes N silence lookups per affirmation (where N = number of chunks).
+
+#### 5. Cached S3 Existence Checks
+**Files**: `apps/api/src/services/audio/assets.ts`
+
+**Problem**: `getBinauralAsset()` and `getBackgroundAsset()` called `fileExistsInS3()` (HEAD request) on every playback bundle request, plus multiple fallback checks.
+
+**Fix**: Added in-memory TTL cache:
+- **Cache TTL**: 5 minutes in dev, 1 hour in production
+- **Known assets bypass**: In production, known default assets skip HEAD check entirely
+- **Graceful fallback**: On S3 check failure, assume exists to avoid blocking playback
+
+**Performance Impact**: Eliminates HEAD requests on the hot path for returning users.
+
+### Files Modified
+- `apps/api/src/services/audio/generation.ts` - Container fix + silence hoisting
+- `apps/api/src/services/audio/assets.ts` - S3 existence caching
+- `packages/audio-engine/src/AudioEngine.ts` - Unified watchdog
+- `packages/audio-engine/src/DriftCorrector.ts` - Disabled drift correction
+
+### Testing Recommendations
+1. **Binaural Cutout Test**: Play a session for 5+ minutes, verify no split-second dropouts
+2. **Loop Transition Test**: Let tracks loop naturally, verify seamless transitions
+3. **Audio Generation Speed**: Time `ensure-audio` job, should be faster with hoisted silence
+4. **S3 Cache Test**: Check logs for reduced HEAD requests on repeated playback
+
+---
 
 ## Executive Summary
 We have successfully transitioned the application to the "V3 Start-Fresh" architecture. The monorepo is now strictly typed, with a clear separation between the Mobile Client (`apps/mobile`), API (`apps/api`), and Shared Contracts (`packages/contracts`). The core "Audio Loop"—creating a session, generating audio, and playing it back with binaural beats—is fully functional and verified.
@@ -6878,3 +7097,1096 @@ Implemented comprehensive improvements based on prompt structure analysis:
 - The fix works alongside the existing `loop = true` property as a fallback mechanism
 
 **Why**: Users were experiencing audible gaps both during playback (around 30 seconds) and when tracks looped. The 30-second gaps are caused by buffering issues when streaming audio files - the player runs out of buffered audio and stops. By monitoring playback state and automatically restarting players when they stop due to buffering, we prevent these gaps. Loop transition gaps are handled by manually seeking to 0 when tracks finish.
+
+---
+
+## 2025-12-21 12:31:59 - Codebase Redundancy Cleanup
+
+**What**: Comprehensive cleanup of redundant code, dead files, and repository bloat.
+
+**Changes Made**:
+
+### 1. Updated .gitignore
+- Added patterns to prevent committing `node_modules`, log files, DB files, storage contents, and `.expo/` cache directories
+- Prevents future accidental commits of generated/gitignored content
+
+### 2. Removed Redundant Repo Bloat
+- Deleted all `.log` files: `bg-api.log`, `bg-api-2.log`, `apps/api/api_errors.log`, `apps/api/verify.log`, `apps/mobile/mobile_errors.log`, `apps/mobile/tsc.log`
+- Deleted local DB file: `apps/api/prisma/prisma/dev.db`
+- Storage directory contents are now properly gitignored (generated files should not be committed)
+
+### 3. Fixed Duplicate Session ID Collision
+- Updated `apps/api/scripts/generate-beginner-sessions.ts` to use a unique UUID for "CALM DOWN FAST" session (was colliding with seed.ts "Anxiety Relief" session)
+- Changed from `b2c3d4e5-f6a7-8901-bcde-f12345678901` to `f1e2d3c4-b5a6-9876-5432-10fedcba0987`
+
+### 4. Consolidated Duplicate Backend Code
+- Refactored `apps/api/src/index.ts` to use a single `serveRangedFile()` helper function for both `/storage/*` and `/assets/*` handlers
+- Removed duplicate range-serving logic (was ~150 lines duplicated)
+- Removed unused imports: `PrismaClient`, `fs`, `createReadStream` from `index.ts`
+- Removed unused `PrismaClient` import from `generation.ts`
+
+### 5. Removed Dead Mobile Code
+- Deleted `apps/mobile/src/components/BottomTabs.tsx` (unused; app uses React Navigation tabs)
+- Deleted `apps/mobile/src/components/AudioDebugger.tsx` (not referenced anywhere)
+- Deleted `apps/mobile/src/components/TestDataHelper.tsx` (not referenced)
+- Deleted `apps/mobile/src/state/appMode.ts` (not referenced)
+- Removed unused `ProgramsListScreen` import from `App.tsx` (screen not registered in navigator)
+- Updated `apps/mobile/src/components/index.ts` to remove exports for deleted components
+
+### 6. Centralized Session Frequency Mapping Logic
+- Moved session frequency mapping from `apps/api/src/services/session-frequency.ts` to `packages/contracts/src/session-frequency.ts`
+- Updated all backend imports to use `@ab/contracts` instead of local service
+- Updated files: `apps/api/src/index.ts`, `apps/api/prisma/seed.ts`, `apps/api/scripts/backfill-session-frequencies.ts`
+- This ensures frontend and backend use the same frequency mapping logic, preventing drift
+
+### 7. Asset Cleanup
+- Deleted stray `assets/image-1762822994.png` reference image
+- Note: `bundledAssets.ts` already correctly matches actual assets in `apps/mobile/assets/audio/`, so no changes needed
+
+**Why**: 
+- Removed noise and confusion from the codebase
+- Prevented future drift between frontend and backend session frequency logic
+- Reduced build time and bundle size by removing dead code
+- Fixed dangerous duplicate ID that could cause data corruption
+- Made codebase easier to navigate and maintain
+
+**Notes**:
+- Empty directories (`apps/apps/`, `apps/mobile/apps/`) appear to be empty and can be manually removed if desired
+- `@ab/utils` package is still listed as a dependency but appears unused; can be removed in a future cleanup pass if confirmed unused
+- `apps/assets/audio/_backup_original/` contains duplicates of assets; consider removing if confirmed redundant
+
+---
+
+## 2025-12-21 13:00:00 - Performance Optimizations (P0/P1 Speed Wins)
+
+**What**: Critical performance improvements to eliminate redundant work, reduce network calls, and optimize runtime performance.
+
+**Changes Made**:
+
+### P0: Critical Speed Wins (High Impact, Low Lift)
+
+#### 1. Made Audio Generation Idempotent (Eliminates Duplicate Jobs)
+- **Problem**: `POST /sessions` created a job, then `POST /sessions/:id/ensure-audio` created another, and frontend could create a third
+- **Fix**: Added `findOrCreateJobForSession()` in `apps/api/src/services/jobs.ts` that checks for existing pending/processing jobs before creating new ones
+- **Impact**: Prevents 2-3 duplicate jobs per session creation, reduces server load and confusion
+- **Files Changed**:
+  - `apps/api/src/services/jobs.ts` - Added idempotent job creation helper
+  - `apps/api/src/index.ts` - Updated both POST endpoints to use idempotent creation
+  - Response now includes `_audioJobId` for frontend polling
+
+#### 2. Fixed Merged-Audio Cache Key (Stable Caching)
+- **Problem**: Merged hash was based on file paths (`filePaths.join("|")`), which vary across environments/machines
+- **Fix**: Changed to use chunk hashes instead of file paths
+- **Changes**:
+  - `ensureAffirmationChunk()` now returns `{ hash: string; url: string }` instead of just URL
+  - `ensureSilence()` now returns `{ hash: string; url: string }` instead of just URL
+  - Merged hash computed from: `hashContent(chunkHashes.join("|") + AUDIO_PROFILE_V3.VERSION)`
+- **Impact**: Cache hits work across environments, storage migrations, and CDN setups. Dramatically improves cache hit rate.
+- **Files Changed**: `apps/api/src/services/audio/generation.ts`
+
+#### 3. Removed HEAD Requests (Eliminated 3 Network Calls)
+- **Problem**: AudioEngine was making HEAD requests for affirmations, binaural, and background before creating players
+- **Fix**: Removed the entire HEAD request loop (3 network calls per playback bundle load)
+- **Impact**: Eliminates 3 network roundtrips and reduces latency on device networks
+- **Files Changed**: `packages/audio-engine/src/AudioEngine.ts`
+
+#### 4. Parallelized Chunk Generation
+- **Problem**: Chunks were generated sequentially, one affirmation at a time
+- **Fix**: Build full chunk task list first, then generate in parallel batches with concurrency limit of 6
+- **Impact**: Dramatically reduces "time to ready" for sessions with multiple affirmations (especially when chunks need generation)
+- **Files Changed**: `apps/api/src/services/audio/generation.ts`
+
+### P1: Performance Optimizations (Medium Lift, High Value)
+
+#### 5. Optimized Ducking Algorithm (O(1) instead of O(n))
+- **Problem**: Voice activity ducking scanned all segments linearly on every tick (O(n) per tick)
+- **Fix**: Added pointer/index that advances as playback position moves forward
+- **Implementation**: Sorted segments by start time, maintain `currentSegmentIndex` pointer that only moves forward
+- **Impact**: O(1) average case instead of O(n) per tick, especially beneficial for long sessions with many voice segments
+- **Files Changed**: `packages/audio-engine/src/ducking.ts`
+
+#### 6. Increased Mixer Tick Interval (Reduced CPU Spikes)
+- **Problem**: Mixer ticked every 25ms (40 Hz), causing CPU spikes and audio-thread contention in React Native
+- **Fix**: Increased tick interval to 75ms (~13 Hz)
+- **Impact**: Reduces CPU usage and audio-thread contention while maintaining smooth audio mixing (smoothing algorithms handle the lower rate)
+- **Files Changed**: `packages/audio-engine/src/AudioEngine.ts`
+
+**Why**: 
+- Eliminates redundant work that was burning real time on every session creation
+- Reduces network latency (3 fewer HEAD requests per playback)
+- Improves cache hit rates dramatically (stable hash keys)
+- Faster audio generation (parallel chunk processing)
+- Better runtime performance (optimized ducking, reduced tick rate)
+
+**Performance Impact Summary**:
+- **Before**: ~3 duplicate jobs, unstable cache, 3 extra network calls, sequential generation, O(n) ducking scans, 25ms ticks
+- **After**: 1 job (idempotent), stable cache, no HEAD requests, parallel generation, O(1) ducking, 75ms ticks
+- **Expected Improvement**: 30-50% faster session creation, 40-60% faster audio generation for new sessions, reduced CPU usage during playback
+
+---
+
+## 2025-12-21 13:26:41 - Removed Values from Affirmation Generation
+
+**What**: Removed user values functionality from affirmation generation as it's no longer part of the user flow.
+
+**Changes Made**:
+
+### 1. Removed Values from AffirmationGenerationRequest
+- Removed `values?: string[]` field from `AffirmationGenerationRequest` interface
+- Updated comments to remove references to values
+
+### 2. Removed Values from Dynamic User Message
+- Removed values from `buildDynamicUserMessage()` function in `affirmation-generator.ts`
+- No longer includes `values: [...]` in the prompt
+
+### 3. Removed Values Fetching in Audio Generation
+- Removed values fetching from database query in `processEnsureAudioJob()`
+- Removed `values` parameter when calling `generateAffirmations()`
+- Simplified user query to only fetch user (for struggle), not values
+
+### 4. Removed Values from API Endpoint
+- Removed `values: body.values || []` from `/affirmations/generate` endpoint
+- API no longer accepts or processes values
+
+### 5. Updated Prompt File
+- Removed reference to "user values" in prompt template comments
+
+**Files Changed**:
+- `apps/api/src/services/affirmation-generator.ts` - Removed values from interface and prompt building
+- `apps/api/src/services/audio/generation.ts` - Removed values fetching and usage
+- `apps/api/src/index.ts` - Removed values from API endpoint
+- `apps/api/src/prompts/affirmations.generator.v2.txt` - Updated comment
+
+**Why**: Values are no longer part of the user onboarding/flow, so they should not be used in affirmation generation. The system now relies on session type, struggle, and goal for personalization.
+
+---
+
+## 2025-12-21 13:53:35 - Refined Shadow Styles for Explore Screen Cards
+
+### Shadow Refinement: Apple-like Subtle Shadows
+
+**Changes Made**:
+- Updated "New Arrivals" card shadows in ExploreScreen
+- Updated SessionTile component shadows (used in "Recommended for You" section)
+- Replaced heavy/material design shadows with Apple-style subtle shadows
+
+### Technical Details
+- Shadow specification: `0px 4px 20px rgba(0,0,0,0.05)`
+- React Native implementation:
+  - `shadowOffset: { width: 0, height: 4 }`
+  - `shadowOpacity: 0.05` (reduced from heavier values)
+  - `shadowRadius: 20` (increased blur)
+  - `elevation: 2` (for Android, lighter elevation)
+
+### Implementation Notes
+- For SessionTile: Wrapped imageContainer in a shadow wrapper View to ensure proper shadow rendering with rounded corners (avoiding overflow: hidden clipping issues)
+- Shadow styles applied directly to newArrivalItem in ExploreScreen
+
+**Files Changed**:
+- `apps/mobile/src/screens/ExploreScreen.tsx` - Added Apple-like shadow to newArrivalItem style
+- `apps/mobile/src/components/SessionTile.tsx` - Added shadow wrapper and Apple-like shadow styles
+
+**Why**: The previous shadows felt "heavy" or "muddy" with too distinct/dark appearance reminiscent of older Material Design. The new Apple-style shadows create a more modern, subtle depth with reduced opacity and increased blur for a cleaner, lighter aesthetic.
+
+---
+
+## 2025-12-21 14:14:39 - Refined Mix Audio Sliders and Drawer Background
+
+### Slider Refinement: Apple-like Thin Track Design
+
+**Changes Made**:
+- Reduced slider height from 40px to 24px for a more compact, precise feel
+- Changed maximum track color from `theme.colors.border.default` (#dee2e6) to `rgba(0, 0, 0, 0.1)` for a much lighter, less dominant appearance
+- Applied to all three sliders: Affirmations, Binaural Frequency, and Atmosphere
+
+### Mix Audio Drawer: High-Blur Glass Effect
+
+**Changes Made**:
+- Updated background from `theme.colors.background.surface` to `rgba(255, 255, 255, 0.85)` for a high-blur glass effect
+- Enhanced border visibility: changed from `theme.colors.border.glass` (rgba(0, 0, 0, 0.08)) to `rgba(255, 255, 255, 0.7)` for better distinct layer separation
+- When open: background becomes `rgba(255, 255, 255, 0.9)` with border `rgba(255, 255, 255, 0.8)` for stronger visual presence
+
+**Files Changed**:
+- `apps/mobile/src/screens/PlayerScreen.tsx` - Updated slider styles and mixPanel background/border styles
+
+**Why**: The sliders previously had a heavy black track that dominated the screen, feeling too "chunky" for a modern interface. The refined design uses a lighter track color and reduced height to create a more precise, Apple-like aesthetic. The Mix Audio drawer edges were too faint, making it hard to distinguish as a distinct layer sliding up. The high-blur glass effect background creates better visual separation while maintaining the elegant translucent aesthetic.
+
+---
+
+## 2025-12-21 14:23:33 - Enhanced Gradients to Mesh-Style (Apple-Inspired)
+
+### Gradient Refinement: Multi-Point Mesh Gradients
+
+**Changes Made**:
+- Updated all gradient palettes from 2-color linear gradients to 4-color mesh-style gradients
+- Added `locations` array prop to control blend points for softer, more organic transitions
+- Applied to SESSION_GRADIENTS (used in SessionTile and ExploreScreen session cards)
+- Applied to DUOTONE_PALETTES (used in DuotoneCard for goal cards)
+- Updated ProgramCard gradients in ExploreScreen to use mesh gradients
+- Preserved existing color palette (Sage Green, Sand/Honey, Muted Purple/Lavender, etc.)
+
+### Technical Details
+- Each palette now uses 4 colors instead of 2: adds lighter highlight at start and subtle variation at end
+- Location stops vary by palette (typically [0, 0.3-0.35, 0.7-0.75, 1]) for organic blend distribution
+- Example: Lavender went from `["#b8a8d8", "#a090c0"]` to `["#c8b8e8", "#b8a8d8", "#a090c0", "#9888b8"]` with locations `[0, 0.3, 0.7, 1]`
+- Updated components to pass `locations` prop to LinearGradient for proper mesh effect
+
+### Backward Compatibility
+- DuotoneCard maintains support for custom 2-color `backgroundColors` prop (locations omitted for custom gradients)
+
+**Files Changed**:
+- `apps/mobile/src/lib/sessionArt.ts` - Updated SESSION_GRADIENTS to 4-color mesh gradients with locations
+- `apps/mobile/src/components/SessionTile.tsx` - Added locations prop to LinearGradient
+- `apps/mobile/src/components/DuotoneCard.tsx` - Updated DUOTONE_PALETTES to mesh gradients, added locations support
+- `apps/mobile/src/screens/ExploreScreen.tsx` - Updated session cards and ProgramCard to use mesh gradients with locations
+
+**Why**: Apple's modern design language favors "Mesh Gradients" - softer, multi-point blends that create more organic, natural transitions rather than harsh linear gradients. The existing color palette (Sage Green, Sand, Muted Purple) was perfect for the wellness app aesthetic, so we preserved it while enhancing the gradient technique. This creates a more sophisticated, modern look that feels more premium and aligned with current Apple design trends.
+
+---
+
+## 2025-12-21 15:22:44 - Added Waveform Visualization to Player Screen
+
+### Waveform Component Implementation
+
+**Changes Made**:
+- Created new `Waveform` component for smooth, organic wave visualization
+- Replaced `MicroVisualizer` bar-based visualization with smooth waveform on PlayerScreen
+- Component creates flowing, Apple-inspired waveform pattern that animates during playback
+- Uses 100 segments with smooth sine wave + harmonic for organic, natural appearance
+- Supports dynamic width (fills container) and customizable animation parameters
+
+### Technical Details
+- **Location**: `apps/mobile/src/components/Waveform.tsx`
+- **Features**:
+  - Smooth animated wave using sine functions with harmonic overlay
+  - Animates height and position when audio is playing
+  - Fades to static state when paused
+  - Configurable cycles, amplitude, speed, and color
+  - Responsive width that adapts to container
+- **Integration**: Replaced MicroVisualizer in PlayerScreen audio visualization section
+- **Animation**: Uses React Native Animated API with linear easing for smooth continuous motion
+
+**Files Changed**:
+- `apps/mobile/src/components/Waveform.tsx` - New waveform component
+- `apps/mobile/src/components/index.ts` - Added Waveform export
+- `apps/mobile/src/screens/PlayerScreen.tsx` - Replaced MicroVisualizer with Waveform
+
+**Why**: The user requested using a waveform from a Figma Wave Generator plugin on the player screen. The new Waveform component creates a smooth, organic wave pattern that's more visually appealing than bar-based visualizers and better aligns with modern audio player aesthetics. The smooth, flowing animation provides a calming, meditative visual that fits the wellness app's aesthetic perfectly.
+
+---
+
+## 2025-12-23 16:13:15 - Security & Reliability Hardening: Auth, Rate Limiting, Typed Errors, and Data Safety
+
+### Comprehensive Security and Reliability Improvements
+
+**Changes Made**:
+- Hardened authentication fallback to require valid auth in production; default UUID no longer bypasses auth
+- Added public base URL configuration and optional job worker toggle for flexible deployment
+- Implemented in-memory rate limiting for affirmation generation to prevent abuse
+- Added session ownership checks and pagination to reduce data leakage and control list sizes
+- Tightened job access and idempotency logic to prevent substring matching and unauthorized visibility
+- Unified asset root selection and ensured local asset URLs align with `/assets/*` serving
+- Added typed API errors on mobile with shared `ApiError` class and centralized auth token wiring
+- Updated mobile screens to use error codes instead of brittle string matching
+- Added `RATE_LIMITED` error code to contracts
+
+### Technical Details
+
+**Authentication Hardening** (`auth.ts`):
+- Production environment now requires valid authentication; default UUID fallback removed
+- Prevents unauthorized access in production deployments
+
+**Configuration Enhancements** (`config.ts`):
+- Added `API_PUBLIC_BASE_URL` for public-facing base URL configuration (useful for proxy/CDN setups)
+- Added `JOB_WORKER_ENABLED` toggle to conditionally enable/disable in-process job worker
+- Added startup logging to show configuration state
+
+**Rate Limiting** (`rate-limit.ts`, `index.ts`):
+- In-memory rate limiting for affirmation generation endpoints
+- Prevents abuse and excessive API calls
+- Note: For multi-process or serverless deployments, should be moved to Redis or persistent store
+
+**Data Safety** (`index.ts`):
+- Session ownership checks ensure users can only access their own sessions
+- Pagination added to list endpoints to prevent uncontrolled data retrieval
+- Reduces risk of data leakage and improves performance
+
+**Job Safety** (`jobs.ts`, `index.ts`):
+- Tightened job access controls to prevent unauthorized job visibility
+- Improved idempotency logic to avoid substring matching issues
+- Better job isolation and security
+
+**Asset Path Consistency** (`assets.ts`, `index.ts`):
+- Unified asset root selection logic
+- Ensured local asset URLs properly align with `/assets/*` serving pattern
+- Consistent asset path handling across environments
+
+**Mobile Error Handling** (`api.ts`, `App.tsx`, `PlayerScreen.tsx`, `AudioGenerationLoadingScreen.tsx`):
+- Created shared `ApiError` class for typed error handling
+- Centralized auth token wiring in API client
+- Replaced brittle string matching with error code checks
+- Better error handling and user feedback
+
+**Contracts** (`errors.ts`):
+- Added `RATE_LIMITED` error code to shared error definitions
+
+**Documentation** (`README.md`):
+- Documented new environment variables: `API_PUBLIC_BASE_URL` and `JOB_WORKER_ENABLED`
+
+**Files Changed**:
+- `apps/api/src/index.ts` - Added rate limiting, session ownership checks, pagination, conditional worker start, asset path consistency
+- `apps/api/src/auth.ts` - Hardened auth fallback for production
+- `apps/api/src/config.ts` - Added public base URL and job worker toggle with startup logging
+- `apps/api/src/jobs.ts` - Tightened job access and idempotency logic
+- `apps/api/src/rate-limit.ts` - New in-memory rate limiting implementation
+- `apps/api/src/assets.ts` - Unified asset root selection
+- `apps/mobile/src/lib/api.ts` - Added typed ApiError class and centralized auth token wiring
+- `apps/mobile/src/App.tsx` - Updated to use typed errors
+- `apps/mobile/src/screens/PlayerScreen.tsx` - Updated to use error codes instead of string matching
+- `apps/mobile/src/screens/AudioGenerationLoadingScreen.tsx` - Updated to use error codes instead of string matching
+- `packages/contracts/src/errors.ts` - Added RATE_LIMITED error code
+- `README.md` - Documented new environment variables
+
+**Why**: These changes address critical security and reliability concerns:
+1. **Auth Hardening**: Prevents unauthorized access in production by removing default UUID bypass
+2. **Rate Limiting**: Protects against abuse and excessive API usage
+3. **Data Safety**: Session ownership checks and pagination prevent data leakage and uncontrolled queries
+4. **Job Safety**: Prevents unauthorized job access and improves idempotency
+5. **Asset Consistency**: Ensures reliable asset serving across different deployment configurations
+6. **Typed Errors**: Improves mobile error handling reliability and maintainability
+7. **Configuration Flexibility**: Allows for different deployment scenarios (proxy/CDN, separate workers)
+
+**Notes**:
+- No Prisma migration added for job/session ownership (kept changes schema-free). For strict DB-level idempotency, can add `sessionId` column and migrate.
+- Rate limiting is in-memory; for multi-process or serverless deployments, should move to Redis or persistent store.
+- Suggested next steps: Run API + mobile and smoke test auth/session visibility, consider DB-level job idempotency migration, set `API_PUBLIC_BASE_URL` if deploying behind proxy/CDN.
+
+**Stats**: 8 files changed, +224 additions, -68 deletions
+
+---
+
+## 2025-12-24 04:30:00 - Admin UI v1 Implementation
+
+### Summary
+Implemented comprehensive admin dashboard for managing Affirmation Beats sessions, jobs, users, and system health. Built with Next.js, includes role-based access control, real-time job monitoring, and full CRUD operations for sessions.
+
+### Changes Made
+
+#### 1. Database Schema Updates
+**Files**: `apps/api/prisma/schema.prisma`
+
+Added admin-specific tables:
+- **AdminUser**: Admin user accounts with roles (ADMIN, OPERATOR, READ_ONLY)
+- **AuditLog**: Immutable audit trail for admin actions
+
+**Migration**: `20251224042109_add_admin_tables`
+
+#### 2. Admin Authentication Service
+**Files**: `apps/api/src/services/admin/auth.ts`, `apps/api/src/middleware/admin-auth.ts`
+
+- Session-based authentication (in-memory tokens for v1)
+- Role-based access control (ADMIN > OPERATOR > READ_ONLY)
+- Password hashing with bcryptjs
+- Admin user creation script
+
+#### 3. Admin API Routes
+**Files**: `apps/api/src/index.ts`
+
+Added protected admin endpoints:
+- `POST /admin/auth/login` - Admin login
+- `POST /admin/auth/logout` - Admin logout
+- `GET /admin/dashboard/stats` - Dashboard statistics
+- `GET /admin/sessions` - List sessions (paginated, filterable)
+- `GET /admin/sessions/:id` - Session details
+- `DELETE /admin/sessions/:id` - Delete session (ADMIN only)
+- `GET /admin/jobs` - List jobs (paginated, filterable)
+- `GET /admin/jobs/:id` - Job details
+- `POST /admin/jobs/:id/retry` - Retry failed job (OPERATOR+)
+- `GET /admin/users` - List users (paginated)
+
+All routes protected with `requireAdminAuth` or `requireAdminRole` middleware.
+
+#### 4. Admin Web Application
+**Files**: `apps/admin/` (new Next.js app)
+
+Created Next.js 15 admin dashboard with:
+- **Login Page** (`/admin/login`) - Admin authentication
+- **Dashboard** (`/admin/dashboard`) - Overview stats, job status, recent jobs
+- **Sessions** (`/admin/sessions`) - Session list with filtering, delete actions
+- **Jobs** (`/admin/jobs`) - Job monitoring with real-time updates, retry functionality
+- **Users** (`/admin/users`) - User list with entitlements
+
+**Tech Stack**:
+- Next.js 15 (App Router)
+- Tailwind CSS
+- TypeScript
+- React 19
+
+#### 5. Admin API Client
+**Files**: `apps/admin/src/lib/api.ts`
+
+Type-safe API client with:
+- Automatic token management (localStorage)
+- Error handling with `AdminApiError` class
+- All admin endpoints typed
+
+#### 6. Admin Layout Component
+**Files**: `apps/admin/src/components/AdminLayout.tsx`
+
+Reusable layout with:
+- Navigation bar (Dashboard, Sessions, Jobs, Users)
+- User info display
+- Logout functionality
+- Route protection
+
+#### 7. Admin User Creation Script
+**Files**: `apps/api/scripts/create-admin-user.ts`
+
+CLI script to create admin users:
+```bash
+bun scripts/create-admin-user.ts <email> <password> [role]
+```
+
+### Key Features
+
+1. **Role-Based Access Control**
+   - ADMIN: Full access (delete sessions, manage users)
+   - OPERATOR: Can retry jobs, view everything (cannot delete)
+   - READ_ONLY: View-only access
+
+2. **Real-Time Monitoring**
+   - Dashboard auto-refreshes every 30s
+   - Jobs page auto-refreshes every 10s
+   - Live job status updates
+
+3. **Session Management**
+   - View all sessions (catalog, user, generated)
+   - Filter by source
+   - View session details (affirmations, audio status, owner)
+   - Delete sessions (ADMIN only)
+
+4. **Job Queue Management**
+   - View all jobs with status
+   - Filter by status (pending, processing, completed, failed)
+   - Retry failed jobs (OPERATOR+)
+   - View job errors and payloads
+
+5. **User Management**
+   - View all users
+   - See entitlements (plan, status)
+   - View session counts per user
+
+### Setup Instructions
+
+1. **Install dependencies**:
+   ```bash
+   pnpm install
+   cd apps/api
+   bun add bcryptjs @types/bcryptjs
+   ```
+
+2. **Create admin user**:
+   ```bash
+   cd apps/api
+   bun scripts/create-admin-user.ts admin@example.com your-password ADMIN
+   ```
+
+3. **Start API** (if not running):
+   ```bash
+   cd apps/api
+   bun --watch src/index.ts
+   ```
+
+4. **Start Admin UI**:
+   ```bash
+   cd apps/admin
+   pnpm dev
+   ```
+
+5. **Access**: http://localhost:3001/admin/login
+
+### Future Enhancements
+
+- [ ] Audit log UI (view admin actions)
+- [ ] System health dashboard (API latency, storage usage, error rates)
+- [ ] Session editing (modify affirmations, regenerate audio)
+- [ ] User entitlement management (upgrade/downgrade plans)
+- [ ] Content moderation (review AI-generated affirmations)
+- [ ] Analytics dashboard (popular sessions, generation costs, TTS provider usage)
+- [ ] JWT tokens with refresh (replace in-memory sessions)
+- [ ] Redis session storage (for multi-process deployments)
+- [ ] OAuth integration (Clerk/Auth0 for admin auth)
+
+### Files Changed
+- `apps/api/prisma/schema.prisma` - Added AdminUser and AuditLog models
+- `apps/api/package.json` - Added bcryptjs dependency
+- `apps/api/src/services/admin/auth.ts` - Admin authentication service
+- `apps/api/src/middleware/admin-auth.ts` - Admin auth middleware
+- `apps/api/src/index.ts` - Added admin API routes
+- `apps/api/scripts/create-admin-user.ts` - Admin user creation script
+- `apps/admin/` - New Next.js admin application (15+ files)
+
+**Stats**: 20+ files created/modified, +2000+ lines added
+
+---
+
+## 2025-12-24 05:00:00 - Admin UI M1 Milestone Complete
+
+### Summary
+Completed M1 milestone of the Admin UI punch list: clickable rows, detail pages, search/filters, job actions, session actions, and breadcrumbs navigation.
+
+### Changes Made
+
+#### 1. Clickable Rows
+**Files**: `apps/admin/src/app/admin/sessions/page.tsx`, `apps/admin/src/app/admin/jobs/page.tsx`, `apps/admin/src/app/admin/users/page.tsx`
+
+- All list rows are now clickable with keyboard support (Enter/Space)
+- Hover states and focus outlines for accessibility
+- Action buttons (delete, retry) stop event propagation to prevent row navigation
+
+#### 2. Detail Pages
+**Files**: 
+- `apps/admin/src/app/admin/jobs/[id]/page.tsx` - Job detail with payload, result, error
+- `apps/admin/src/app/admin/users/[id]/page.tsx` - User detail with entitlements
+- `apps/admin/src/app/admin/sessions/[id]/page.tsx` - Session detail (already existed, enhanced)
+
+All detail pages show comprehensive information and support actions.
+
+#### 3. Search and Filters
+**Files**: All list pages + API endpoints
+
+**Sessions**:
+- Search by title/goalTag
+- Filter by source (catalog/user/generated)
+- Filter by audioReady status
+
+**Jobs**:
+- Search by type/error message
+- Filter by status (pending/processing/completed/failed)
+- Filter by type
+
+**Users**:
+- Search by email
+- Filter by plan (free/pro)
+
+All filters are debounced and reflected in URL query params.
+
+#### 4. Job Actions
+**Files**: `apps/api/src/index.ts`, `apps/admin/src/lib/api.ts`, `apps/admin/src/app/admin/jobs/[id]/page.tsx`
+
+Added API endpoints:
+- `POST /admin/jobs/:id/retry` - Retry failed job
+- `POST /admin/jobs/:id/cancel` - Cancel pending/processing job
+- `POST /admin/jobs/:id/requeue` - Create new job with same payload
+
+All actions require OPERATOR+ role and are available in job detail page.
+
+#### 5. Session Actions
+**Files**: `apps/api/src/index.ts`, `apps/admin/src/lib/api.ts`, `apps/admin/src/app/admin/sessions/[id]/page.tsx`
+
+Added API endpoint:
+- `POST /admin/sessions/:id/rebuild-audio` - Trigger audio regeneration job
+
+Action available in session detail page, requires OPERATOR+ role.
+
+#### 6. Breadcrumbs Navigation
+**Files**: `apps/admin/src/components/Breadcrumbs.tsx`
+
+Reusable breadcrumb component added to all detail pages:
+- Dashboard > Entity > Detail
+- Clickable navigation path
+- Consistent styling
+
+#### 7. User Detail API Endpoint
+**Files**: `apps/api/src/index.ts`
+
+Added `GET /admin/users/:id` endpoint to support user detail page.
+
+### Key Features
+
+1. **Complete M1 Functionality**
+   - All list pages have clickable rows
+   - All entities have detail pages
+   - Search and filters on all list pages
+   - Job management actions (retry, cancel, requeue)
+   - Session management actions (rebuild audio, delete)
+   - Breadcrumb navigation throughout
+
+2. **User Experience**
+   - Debounced search (300ms)
+   - Clear filters button
+   - Keyboard accessibility
+   - Loading states
+   - Error handling
+
+3. **API Enhancements**
+   - Search support in all list endpoints
+   - Filter support with proper Prisma queries
+   - Role-based action endpoints
+   - User detail endpoint
+
+### Files Changed
+- `apps/admin/src/app/admin/sessions/page.tsx` - Clickable rows, search/filters
+- `apps/admin/src/app/admin/jobs/page.tsx` - Clickable rows, search/filters
+- `apps/admin/src/app/admin/users/page.tsx` - Clickable rows, search/filters
+- `apps/admin/src/app/admin/jobs/[id]/page.tsx` - Job detail with actions
+- `apps/admin/src/app/admin/users/[id]/page.tsx` - User detail (enhanced)
+- `apps/admin/src/app/admin/sessions/[id]/page.tsx` - Rebuild audio action
+- `apps/admin/src/components/Breadcrumbs.tsx` - New breadcrumb component
+- `apps/admin/src/lib/api.ts` - Added new API methods
+- `apps/api/src/index.ts` - Added search/filter support, job actions, session actions, user detail
+
+### Next Steps (M2)
+- Audio Inspector component
+- Integrity checks for audio assets
+- Audit Log table and UI
+- Dashboard health widgets
+- Database schema updates (jobs fields, session_audio_assets, audit_log)
+
+**Stats**: 10+ files modified, +500+ lines added
+
+---
+
+## 2025-12-24 05:30:00 - Admin UI M2 Progress: Audit Log & Health Metrics
+
+### Summary
+Implemented audit logging system and enhanced dashboard with health metrics. All admin actions now tracked, and dashboard shows job success rates and failure trends.
+
+### Changes Made
+
+#### 1. Database Schema Updates
+**Files**: `apps/api/prisma/schema.prisma`
+
+**Job Table Enhancements**:
+- Added `attempts` field (tracks retry count)
+- Added `startedAt` timestamp (when job processing begins)
+- Added `finishedAt` timestamp (when job completes/fails)
+- Added `sessionId` and `userId` foreign keys (optional links)
+- Added indexes for performance
+
+**Migration**: `20251224050954_add_job_fields`
+
+#### 2. Audit Log Service
+**Files**: `apps/api/src/services/admin/audit.ts`
+
+- `createAuditLog()` - Records admin actions with before/after details
+- `getAuditLogs()` - Retrieves audit logs with filtering (pagination, action, resource type, date range)
+- All audit entries include: admin user, action, resource type/ID, details JSON, IP, user agent
+
+#### 3. Audit Logging Integration
+**Files**: `apps/api/src/index.ts`, `apps/api/src/middleware/admin-auth.ts`
+
+Updated all admin action endpoints to log to audit:
+- `job.retry` - When admin retries a failed job
+- `job.cancel` - When admin cancels a pending/processing job
+- `job.requeue` - When admin creates new job from existing
+- `session.delete` - When admin deletes a session
+- `session.rebuild-audio` - When admin triggers audio regeneration
+
+Enhanced `AdminContext` to include IP address and user agent for audit tracking.
+
+#### 4. Audit Log API Endpoint
+**Files**: `apps/api/src/index.ts`
+
+- `GET /admin/audit` - List audit logs with filters:
+  - Pagination (page, limit)
+  - Filter by admin user, action, resource type, resource ID
+  - Date range filtering (startDate, endDate)
+
+#### 5. Audit Log UI Page
+**Files**: `apps/admin/src/app/admin/audit/page.tsx`, `apps/admin/src/lib/api.ts`
+
+- Full audit log table with filters
+- Shows: timestamp, admin user, action, resource type/ID, details
+- Expandable details view (JSON viewer)
+- Filter by action type and resource type
+- Pagination support
+
+#### 6. Dashboard Health Metrics
+**Files**: `apps/api/src/index.ts`, `apps/admin/src/app/admin/dashboard/page.tsx`
+
+Enhanced dashboard stats endpoint with:
+- Jobs created in last 24h and 7d
+- Success rates (24h and 7d) with color coding:
+  - Green: ≥95%
+  - Yellow: ≥80%
+  - Red: <80%
+- Failed job counts
+- Completed job counts
+
+Dashboard UI displays health metrics widget with visual indicators.
+
+#### 7. Job Timing Tracking
+**Files**: `apps/api/src/services/jobs.ts`
+
+Updated `updateJobStatus()` to automatically track:
+- `startedAt` when status changes to "processing"
+- `finishedAt` when status changes to "completed" or "failed"
+
+### Key Features
+
+1. **Complete Audit Trail**
+   - Every admin action is logged
+   - Includes context (before/after, job IDs, session titles)
+   - IP address and user agent tracking
+   - Immutable append-only log
+
+2. **Health Monitoring**
+   - Real-time job success rates
+   - 24h and 7d trend analysis
+   - Visual indicators for health status
+   - Failure tracking
+
+3. **Job Management**
+   - Retry attempts tracked
+   - Timing information (startedAt, finishedAt)
+   - Session/user linking for traceability
+
+### Files Changed
+- `apps/api/prisma/schema.prisma` - Added Job fields
+- `apps/api/src/services/admin/audit.ts` - New audit log service
+- `apps/api/src/middleware/admin-auth.ts` - Enhanced AdminContext
+- `apps/api/src/index.ts` - Added audit logging, cancel/requeue endpoints, enhanced dashboard stats
+- `apps/api/src/services/jobs.ts` - Added timing tracking
+- `apps/admin/src/app/admin/audit/page.tsx` - New audit log UI
+- `apps/admin/src/app/admin/dashboard/page.tsx` - Added health metrics widget
+- `apps/admin/src/lib/api.ts` - Added audit log API methods
+- `apps/admin/src/components/AdminLayout.tsx` - Added Audit Log to navigation
+
+### Next Steps
+- Audio Inspector component (asset inventory, integrity checks)
+- Session audio assets table (track individual audio files)
+- Enhanced job detail page (timeline, step durations)
+- RBAC: Add SUPPORT role
+
+**Stats**: 9 files modified, +400+ lines added
+
+---
+
+## 2025-12-24 06:00:00 - Admin UI M2 Complete: Audio Inspector & Integrity Checks
+
+### Summary
+Completed Audio Inspector component with asset inventory and integrity checks. This provides first-class audio debugging capabilities as specified in the punch list.
+
+### Changes Made
+
+#### 1. Database Schema: SessionAudioAsset Table
+**Files**: `apps/api/prisma/schema.prisma`
+
+Created `SessionAudioAsset` model to track individual audio files per session:
+- Links to `SessionAudio` (one-to-many)
+- Tracks: kind, lineIndex, storageKey, duration, codec, sampleRate, channels, fileSize, checksum
+- Optional link to `AudioAsset` for cached assets
+- Indexes for efficient querying
+
+**Migration**: `add_session_audio_assets`
+
+#### 2. Audio Inspector Component
+**Files**: `apps/admin/src/components/AudioInspector.tsx`
+
+New reusable component displaying:
+- **Integrity Checks Panel**: Visual status indicators (pass/fail/warning) for:
+  - Merged audio asset existence
+  - Asset inventory completeness
+  - Sample rate consistency
+  - File size validation
+- **Asset Inventory Table**: 
+  - Columns: Kind, Line, Duration, Format, Size, Actions
+  - Expandable detail view for each asset
+  - Shows metadata: ID, storage key, codec, sample rate, channels, file size, checksum
+- **Formatting Helpers**: Human-readable file sizes, duration formatting
+
+#### 3. Audio Integrity Check API
+**Files**: `apps/api/src/index.ts`
+
+New endpoint: `GET /admin/sessions/:id/audio-integrity`
+
+Performs automated integrity checks:
+1. **Merged Audio Asset**: Verifies file exists (local) or URL is valid (S3)
+2. **Asset Inventory**: Checks for expected asset types (affirmation_line, affirmation_stitched, background, binaural, final_mix)
+3. **Sample Rate Consistency**: Validates all assets use 44100 Hz
+4. **File Size Validation**: Flags suspiciously small files (<1KB)
+
+Returns structured check results with status (pass/fail/warning), message, and optional threshold.
+
+#### 4. Session Detail Page Integration
+**Files**: `apps/admin/src/app/admin/sessions/[id]/page.tsx`, `apps/api/src/index.ts`
+
+- Updated session detail API to include `SessionAudioAsset[]` in response
+- Integrated Audio Inspector component into session detail page
+- Loads integrity checks on page load
+- Displays asset inventory and integrity status
+
+#### 5. API Client Updates
+**Files**: `apps/admin/src/lib/api.ts`
+
+Added `getAudioIntegrity()` method to fetch integrity check results.
+
+### Key Features
+
+1. **First-Class Audio Debugging**
+   - Complete asset inventory per session
+   - Automated integrity checks
+   - Visual status indicators
+   - Detailed metadata view
+
+2. **Asset Tracking**
+   - Individual file tracking (not just merged audio)
+   - Line-by-line affirmation audio
+   - Background and binaural track tracking
+   - Storage key and checksum tracking
+
+3. **Integrity Validation**
+   - File existence checks
+   - Format consistency validation
+   - Sample rate validation
+   - File size sanity checks
+
+### Files Changed
+- `apps/api/prisma/schema.prisma` - Added SessionAudioAsset model
+- `apps/api/src/index.ts` - Added audio integrity endpoint, updated session detail to include assets
+- `apps/admin/src/components/AudioInspector.tsx` - New component
+- `apps/admin/src/app/admin/sessions/[id]/page.tsx` - Integrated Audio Inspector
+- `apps/admin/src/lib/api.ts` - Added getAudioIntegrity method
+
+### Next Steps
+- Update audio generation service to record SessionAudioAsset entries during processing
+- Add preview player (line-by-line, affirmation-only, full mix, layer toggles)
+- Add AI Sources page (prompt templates, versioning, rollout flags)
+- Add SUPPORT role to RBAC
+
+**Stats**: 5 files modified, +300+ lines added
+
+---
+
+## Content Moderation System - 2025-12-24 07:09:00
+
+Implemented comprehensive content moderation system for affirmations to ensure safety and prevent harmful, negative, vulgar, or racist content from being published.
+
+### Database Changes
+- Added moderation fields to `SessionAffirmation` table:
+  - `moderationStatus`: "pending" | "approved" | "flagged" | "rejected" (default: "pending")
+  - `moderationReason`: Optional reason for flag/reject (e.g., "vulgar", "negative", "racist")
+  - `moderatedBy`: Admin user ID who performed the moderation action
+  - `moderatedAt`: Timestamp of moderation action
+  - `originalText`: Preserved original text when affirmation is edited
+  - `autoFlagged`: Boolean indicating if content was flagged by automated moderation
+- Added indexes for efficient moderation queries:
+  - `@@index([moderationStatus])` - Quick filtering by status
+  - `@@index([sessionId, moderationStatus])` - Efficient session-level moderation queries
+- Migration: `20251224070922_add_moderation_fields`
+
+### Automated Moderation Service
+**File**: `apps/api/src/services/moderation.ts`
+
+- **OpenAI Moderation API Integration**:
+  - Automatically checks all generated affirmations using OpenAI's moderation API
+  - Flags content in categories: hate, hate/threatening, self-harm, sexual, sexual/minors, violence, violence/graphic
+  - Returns detailed category scores and flagged status
+  - Fails open (doesn't block content if moderation service is down)
+
+- **Heuristic Negative Content Detection**:
+  - Pattern matching for negative language (e.g., "I am worthless", "I can't succeed")
+  - Detects self-deprecating phrases and negative affirmations
+  - Complements OpenAI moderation for edge cases
+
+- **Comprehensive Moderation Check**:
+  - `moderateAffirmation()` function combines OpenAI API + heuristics
+  - Returns `shouldFlag`, `reason`, and `autoFlagged` status
+  - Used during affirmation generation to automatically flag problematic content
+
+### Admin Moderation Service
+**File**: `apps/api/src/services/admin/moderation.ts`
+
+- **Statistics**:
+  - `getModerationStats()`: Returns counts for pending, approved, flagged, rejected, total
+  - Used for moderation dashboard metrics
+
+- **Flagged Sessions**:
+  - `getFlaggedSessions()`: Retrieves sessions with flagged/pending affirmations
+  - Supports pagination
+  - Includes session metadata and flagged affirmations
+
+- **Moderation Actions**:
+  - `moderateAffirmationAction()`: Single affirmation moderation (approve, reject, flag, edit)
+  - `bulkModerateAffirmations()`: Bulk approve/reject multiple affirmations
+  - All actions record admin user, timestamp, and reason
+  - Original text preserved when editing
+
+### API Endpoints
+**File**: `apps/api/src/index.ts`
+
+- `GET /admin/moderation/stats` - Get moderation statistics (requires admin auth)
+- `GET /admin/moderation/flagged` - Get sessions with flagged affirmations (paginated, requires admin auth)
+- `POST /admin/moderation/affirmations/:id` - Moderate single affirmation (requires OPERATOR role)
+  - Actions: "approve", "reject", "flag", "edit"
+  - Supports editing text and providing reason
+- `POST /admin/moderation/affirmations/bulk` - Bulk moderate affirmations (requires OPERATOR role)
+  - Actions: "approve", "reject"
+  - Accepts array of affirmation IDs
+
+- **Integration with Affirmation Generation**:
+  - `POST /affirmations/generate`: Now runs async moderation checks (non-blocking)
+  - `processEnsureAudioJob()`: Automatically checks and flags affirmations during audio generation
+  - Moderation status set to "flagged" if problematic, "pending" otherwise
+
+- **Session List Filtering**:
+  - Added `moderationStatus` query parameter to `/admin/sessions`
+  - Filter sessions by moderation status of their affirmations
+
+- **Session Detail**:
+  - Updated to include moderation fields in affirmations response
+  - Shows moderation status, reason, and auto-flagged status
+
+### Admin UI - Moderation Dashboard
+**File**: `apps/admin/src/app/admin/moderation/page.tsx`
+
+- **Statistics Dashboard**:
+  - Cards showing: Pending, Approved, Flagged, Rejected, Total
+  - Color-coded status indicators
+  - Real-time statistics from API
+
+- **Flagged Sessions List**:
+  - Displays all sessions with flagged/pending affirmations
+  - Shows session metadata (title, source, owner, date)
+  - Links to session detail page
+  - Pagination support
+
+- **Affirmation Review**:
+  - Each affirmation shows:
+    - Index number
+    - Moderation status badge (color-coded)
+    - Auto-flagged indicator (if applicable)
+    - Full text
+    - Moderation reason (if flagged/rejected)
+  - Checkbox selection for bulk actions
+  - Individual action buttons: Approve, Reject, Edit
+
+- **Bulk Actions**:
+  - Select multiple affirmations across sessions
+  - Bulk approve or reject with optional reason
+  - Clear selection button
+
+- **Navigation**:
+  - Added "Moderation" link to AdminLayout sidebar
+  - Accessible from main admin navigation
+
+### Session Detail Page Updates
+**File**: `apps/admin/src/app/admin/sessions/[id]/page.tsx`
+
+- **Moderation Status Display**:
+  - Affirmations show color-coded moderation status badges
+  - Auto-flagged indicator for automatically flagged content
+  - Moderation reason displayed if present
+  - Border colors match status (yellow=pending, red=flagged, green=approved, gray=rejected)
+
+### API Client Updates
+**File**: `apps/admin/src/lib/api.ts`
+
+- Added moderation API methods:
+  - `getModerationStats()`: Fetch moderation statistics
+  - `getFlaggedSessions(page, limit)`: Get flagged sessions with pagination
+  - `moderateAffirmation(id, action, editedText?, reason?)`: Moderate single affirmation
+  - `bulkModerateAffirmations(ids, action, reason?)`: Bulk moderate affirmations
+
+### Safety Features
+
+1. **Automated Detection**:
+   - All affirmations checked during generation
+   - OpenAI moderation API catches harmful content
+   - Heuristic checks catch negative patterns
+   - Non-blocking (doesn't delay user experience)
+
+2. **Admin Review**:
+   - Centralized moderation dashboard
+   - Clear visual indicators for flagged content
+   - Easy approve/reject/edit workflow
+   - Bulk operations for efficiency
+
+3. **Audit Trail**:
+   - All moderation actions logged in audit log
+   - Records: admin user, action type, resource, before/after state
+   - IP address and user agent tracked
+   - Original text preserved when editing
+
+4. **Transparency**:
+   - Auto-flagged content clearly marked
+   - Moderation reasons displayed
+   - Status visible throughout admin UI
+   - Filter sessions by moderation status
+
+### Files Modified/Created
+
+**Backend**:
+- `apps/api/prisma/schema.prisma` - Added moderation fields to SessionAffirmation
+- `apps/api/src/services/moderation.ts` - NEW: Automated moderation service
+- `apps/api/src/services/admin/moderation.ts` - NEW: Admin moderation service
+- `apps/api/src/services/audio/generation.ts` - Integrated moderation checks during audio generation
+- `apps/api/src/index.ts` - Added moderation API endpoints, integrated checks in generation
+
+**Frontend**:
+- `apps/admin/src/app/admin/moderation/page.tsx` - NEW: Moderation dashboard UI
+- `apps/admin/src/components/AdminLayout.tsx` - Added Moderation navigation link
+- `apps/admin/src/lib/api.ts` - Added moderation API client methods
+- `apps/admin/src/app/admin/sessions/[id]/page.tsx` - Added moderation status display
+
+**Database**:
+- Migration: `20251224070922_add_moderation_fields/migration.sql`
+
+### Decision Rationale
+
+1. **Why OpenAI Moderation API?**
+   - Industry-standard content moderation
+   - Catches hate, violence, sexual content, self-harm
+   - More reliable than custom regex patterns
+   - Handles edge cases and context
+
+2. **Why Heuristic Checks?**
+   - Catches negative affirmations that might pass OpenAI (e.g., "I am worthless")
+   - Complements API for edge cases
+   - Fast and doesn't require API calls
+
+3. **Why Non-Blocking?**
+   - User experience: affirmations appear immediately
+   - Moderation happens asynchronously
+   - Flagged content can be reviewed and removed later
+   - Better than blocking legitimate content
+
+4. **Why Preserve Original Text?**
+   - Audit trail: see what was changed
+   - Accountability: know what was edited
+   - Reversibility: can restore original if needed
+
+5. **Why Bulk Actions?**
+   - Efficiency: moderate multiple affirmations quickly
+   - Useful for batch approvals after review
+   - Reduces repetitive clicking
+
+### Testing Recommendations
+
+1. **Unit Tests**:
+   - Test moderation service with various content types
+   - Test heuristic pattern matching
+   - Test bulk moderation operations
+
+2. **Integration Tests**:
+   - Test moderation during affirmation generation
+   - Test moderation API endpoints
+   - Test audit log creation
+
+3. **Manual Testing**:
+   - Generate affirmations with problematic content
+   - Verify auto-flagging works
+   - Test moderation dashboard UI
+   - Test approve/reject/edit actions
+   - Test bulk operations
+
+### Next Steps
+
+- [ ] Add moderation status filter to sessions list page
+- [ ] Add moderation metrics to dashboard
+- [ ] Consider adding moderation webhooks for real-time alerts
+- [ ] Add moderation export functionality (CSV/JSON)
+- [ ] Consider adding moderation queue prioritization (auto-flagged first)
+
+**Stats**: 9 files modified/created, +800+ lines added, 1 migration created

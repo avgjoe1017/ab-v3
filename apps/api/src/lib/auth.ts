@@ -7,6 +7,7 @@
 
 import type { Context } from "hono";
 import { verifyClerkToken, isClerkConfigured } from "./clerk";
+import { isProduction } from "./config";
 
 /**
  * Extract user ID from request context
@@ -30,11 +31,16 @@ export async function getUserId(c: Context): Promise<string | null> {
       }
       // If token is invalid, fall through to default user ID for development
     }
-    // If no token provided but Clerk is configured, use default user ID for development
-    // This allows development to work without requiring full Clerk setup
+    // If no token provided but Clerk is configured, allow dev fallback only
+    if (isProduction()) {
+      return null;
+    }
   }
   
   // Development fallback: return default user ID
+  if (isProduction()) {
+    return null;
+  }
   const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000000";
   return DEFAULT_USER_ID;
 }
