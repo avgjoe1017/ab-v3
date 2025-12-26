@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, TextInput, Pressable, Alert } from "react-native";
 import { useAuthToken } from "../../lib/auth";
 import { getUserStruggle } from "../../lib/values";
-import { apiPost } from "../../lib/api";
+import { apiGet, apiPost } from "../../lib/api";
 import type { SessionV3 } from "@ab/contracts";
 import { PrimaryButton } from "../../components";
 import { theme } from "../../theme";
@@ -123,7 +123,19 @@ export function QuickGenerateFlow({ navigation }: QuickGenerateFlowProps) {
     if (!quickPack) return;
 
     try {
-      const payload = packToSessionPayload(quickPack);
+      // Fetch user's existing sessions to get used titles
+      let usedTitles: string[] = [];
+      try {
+        const sessionsResponse = await apiGet<{ sessions: Array<{ title: string }> }>("/sessions", authToken);
+        usedTitles = sessionsResponse.sessions
+          .filter(s => s.title) // Only include sessions with titles
+          .map(s => s.title);
+      } catch (err) {
+        console.log("[QuickGenerateFlow] Could not fetch user sessions for title deduplication:", err);
+        // Continue without used titles - better to have a duplicate than fail
+      }
+      
+      const payload = packToSessionPayload(quickPack, usedTitles);
       const res = await apiPost<SessionV3>("/sessions", payload, authToken);
       navigation.navigate("Player", { sessionId: res.id });
     } catch (error) {

@@ -1,7 +1,13 @@
 import React from "react";
-import { Text, Pressable, StyleSheet, ViewStyle, TextStyle } from "react-native";
+import { Text, Pressable, StyleSheet, ViewStyle, TextStyle, Platform } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from "react-native-reanimated";
 import { theme } from "../theme/tokens";
 
 interface PrimaryButtonProps {
@@ -13,6 +19,8 @@ interface PrimaryButtonProps {
   variant?: "primary" | "gradient" | "highlight";
   size?: "sm" | "md" | "lg";
   style?: ViewStyle;
+  animated?: boolean;
+  haptic?: boolean;
 }
 
 /**
@@ -28,10 +36,68 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   variant = "gradient",
   size = "md",
   style,
+  animated = true,
+  haptic = true,
 }) => {
   const height = size === "sm" ? 44 : size === "md" ? 56 : 64;
   // Use button typography style - size variants maintain accessibility
   const iconSize = size === "sm" ? 18 : size === "md" ? 24 : 28;
+
+  // Animation values for smooth spring animations
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+
+  // Trigger haptic feedback
+  const triggerHapticFeedback = () => {
+    if (haptic && !disabled) {
+      if (Platform.OS === "ios") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } else if (Platform.OS === "android") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    }
+  };
+
+  // Animation handlers
+  const handlePressIn = () => {
+    "worklet";
+    triggerHapticFeedback();
+    if (animated) {
+      scale.value = withSpring(1.02, {
+        damping: 15,
+        stiffness: 400,
+        mass: 0.5,
+      });
+      opacity.value = withSpring(0.95, {
+        damping: 20,
+        stiffness: 300,
+      });
+    }
+  };
+
+  const handlePressOut = () => {
+    "worklet";
+    if (animated) {
+      scale.value = withSpring(1, {
+        damping: 20,
+        stiffness: 400,
+        mass: 0.8,
+      });
+      opacity.value = withSpring(1, {
+        damping: 20,
+        stiffness: 300,
+      });
+    }
+  };
+
+  // Animated styles
+  const animatedStyle = useAnimatedStyle(() => {
+    if (!animated) return {};
+    return {
+      transform: [{ scale: scale.value }],
+      opacity: opacity.value * (disabled ? 0.5 : 1),
+    };
+  });
 
   const buttonContent = (
     <>
@@ -48,24 +114,22 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   if (variant === "gradient") {
     return (
       <Pressable
-        style={({ pressed }) => [
-          styles.button,
-          { height },
-          pressed && styles.buttonPressed,
-          disabled && styles.buttonDisabled,
-          style,
-        ]}
+        style={[styles.button, { height }, disabled && styles.buttonDisabled, style]}
         onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         disabled={disabled}
       >
-        <LinearGradient
-          colors={theme.colors.gradients.accent}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={[styles.gradient, { height }]}
-        >
-          {buttonContent}
-        </LinearGradient>
+        <Animated.View style={[animatedStyle, { height }]}>
+          <LinearGradient
+            colors={theme.colors.gradients.accent}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.gradient, { height }]}
+          >
+            {buttonContent}
+          </LinearGradient>
+        </Animated.View>
       </Pressable>
     );
   }
@@ -73,36 +137,42 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   if (variant === "highlight") {
     return (
       <Pressable
-        style={({ pressed }) => [
-          styles.button,
-          styles.buttonHighlight,
-          { height, backgroundColor: theme.colors.accent.highlight },
-          pressed && styles.buttonPressed,
-          disabled && styles.buttonDisabled,
-          style,
-        ]}
+        style={[styles.button, styles.buttonHighlight, { height }, disabled && styles.buttonDisabled, style]}
         onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         disabled={disabled}
       >
-        {buttonContent}
+        <Animated.View
+          style={[
+            animatedStyle,
+            styles.buttonHighlight,
+            { height, backgroundColor: theme.colors.accent.highlight },
+          ]}
+        >
+          {buttonContent}
+        </Animated.View>
       </Pressable>
     );
   }
 
   return (
     <Pressable
-      style={({ pressed }) => [
-        styles.button,
-        styles.buttonPrimary,
-        { height, backgroundColor: theme.colors.accent.primary },
-        pressed && styles.buttonPressed,
-        disabled && styles.buttonDisabled,
-        style,
-      ]}
+      style={[styles.button, styles.buttonPrimary, { height }, disabled && styles.buttonDisabled, style]}
       onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       disabled={disabled}
     >
-      {buttonContent}
+      <Animated.View
+        style={[
+          animatedStyle,
+          styles.buttonPrimary,
+          { height, backgroundColor: theme.colors.accent.primary },
+        ]}
+      >
+        {buttonContent}
+      </Animated.View>
     </Pressable>
   );
 };
@@ -137,9 +207,6 @@ const styles = StyleSheet.create({
   label: {
     ...theme.typography.styles.button,
     color: theme.colors.text.inverse,
-  },
-  buttonPressed: {
-    opacity: 0.8,
   },
   buttonDisabled: {
     opacity: 0.5,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,9 +11,10 @@ import {
   Platform,
   Alert,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { AppScreen, MiniPlayer } from "../components";
+import { AppScreen, MiniPlayer, ApiConnectionStatus, ForYouSection, TuneForYou, type CurationCard } from "../components";
 import { theme } from "../theme";
 import { getAudioEngine } from "@ab/audio-engine";
 import { useDraftStore } from "../state/useDraftStore";
@@ -121,7 +122,10 @@ export default function HomeScreen({ navigation }: any) {
         const struggleResponse = await getUserStruggle(authToken);
         userStruggle = struggleResponse.struggle || undefined;
       } catch (err) {
-        console.log("[HomeScreen] Could not fetch user struggle, skipping");
+        // Silently skip if user struggle fetch fails - it's optional
+        if (__DEV__) {
+          console.log("[HomeScreen] Could not fetch user struggle, skipping:", err instanceof Error ? err.message : String(err));
+        }
       }
 
       // Determine session type from goal
@@ -150,7 +154,19 @@ export default function HomeScreen({ navigation }: any) {
       // Auto-select audio settings
       const audioSettings = decideAudioSettings(trimmedInput);
 
-      // Create pack for review gate
+      // Fetch user's existing sessions to get used titles
+      let usedTitles: string[] = [];
+      try {
+        const sessionsResponse = await apiGet<{ sessions: Array<{ title: string }> }>("/sessions", authToken);
+        usedTitles = sessionsResponse.sessions
+          .filter(s => s.title) // Only include sessions with titles
+          .map(s => s.title);
+      } catch (err) {
+        console.log("[HomeScreen] Could not fetch user sessions for title deduplication:", err);
+        // Continue without used titles - better to have a duplicate than fail
+      }
+
+      // Create pack
       const pack: AffirmationPack = {
         goal: trimmedInput,
         affirmations: response.affirmations,
@@ -159,17 +175,45 @@ export default function HomeScreen({ navigation }: any) {
         audioSettings,
       };
 
-      setReviewPack(pack);
+      // Skip review - directly create session and navigate to player
+      const payload = packToSessionPayload(pack, usedTitles);
+      const res = await apiPost<SessionV3>("/sessions", payload, authToken);
+      
+      // Clear input
+      setInputText("");
       setIsGenerating(false);
+      
+      // Navigate directly to Player (which will handle audio generation loading)
+      navigation.getParent()?.navigate("Player", { sessionId: res.id });
     } catch (error) {
-      console.error("[HomeScreen] Error in quick generate:", error);
       setIsGenerating(false);
-      Alert.alert(
-        "Generation Failed",
-        error instanceof Error 
-          ? error.message 
-          : "Could not generate affirmations. Please check your connection and try again."
-      );
+      
+      // Provide more helpful error messages
+      let errorMessage = "Could not generate affirmations. Please check your connection and try again.";
+      
+      if (error instanceof Error) {
+        const errorStr = error.message.toLowerCase();
+        
+        // Check for network-related errors
+        if (errorStr.includes("network request failed") || 
+            errorStr.includes("failed to fetch") ||
+            errorStr.includes("networkerror") ||
+            errorStr.includes("connection")) {
+          errorMessage = "Cannot connect to server. Please make sure:\n\n• The API server is running\n• You're connected to the internet\n• Your device can reach the server";
+        } else if (errorStr.includes("unauthorized") || errorStr.includes("401")) {
+          errorMessage = "Authentication failed. Please try logging in again.";
+        } else if (errorStr.includes("rate limit") || errorStr.includes("429")) {
+          errorMessage = "Too many requests. Please wait a moment and try again.";
+        } else {
+          errorMessage = error.message;
+        }
+        
+        console.error("[HomeScreen] Error in quick generate:", error);
+      } else {
+        console.error("[HomeScreen] Error in quick generate (unknown):", error);
+      }
+      
+      Alert.alert("Generation Failed", errorMessage);
     }
   };
 
@@ -178,7 +222,20 @@ export default function HomeScreen({ navigation }: any) {
 
     try {
       setIsGenerating(true);
-      const payload = packToSessionPayload(reviewPack);
+      
+      // Fetch user's existing sessions to get used titles
+      let usedTitles: string[] = [];
+      try {
+        const sessionsResponse = await apiGet<{ sessions: Array<{ title: string }> }>("/sessions", authToken);
+        usedTitles = sessionsResponse.sessions
+          .filter(s => s.title) // Only include sessions with titles
+          .map(s => s.title);
+      } catch (err) {
+        console.log("[HomeScreen] Could not fetch user sessions for title deduplication:", err);
+        // Continue without used titles - better to have a duplicate than fail
+      }
+      
+      const payload = packToSessionPayload(reviewPack, usedTitles);
       const res = await apiPost<SessionV3>("/sessions", payload, authToken);
       
       // Clear review pack and input
@@ -258,6 +315,76 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
+  const handleCurationCardPress = useCallback(async (card: CurationCard) => {
+    try {
+      setIsGenerating(true);
+
+      // Generate affirmations based on card title/goal
+      const goal = card.title;
+      let sessionType = "Meditate";
+      if (goal.toLowerCase().includes("focus") || goal.toLowerCase().includes("work")) {
+        sessionType = "Focus";
+      } else if (goal.toLowerCase().includes("sleep") || goal.toLowerCase().includes("downshift")) {
+        sessionType = "Sleep";
+      } else if (goal.toLowerCase().includes("calm") || goal.toLowerCase().includes("steady")) {
+        sessionType = "Anxiety Relief";
+      }
+
+      // Fetch user struggle if available
+      let userStruggle: string | undefined = undefined;
+      try {
+        const struggleResponse = await getUserStruggle(authToken);
+        userStruggle = struggleResponse.struggle || undefined;
+      } catch (err) {
+        // Silently skip if user struggle fetch fails
+      }
+
+      // Generate affirmations
+      const response = await apiPost<{ affirmations: string[]; reasoning?: string }>(
+        "/affirmations/generate",
+        {
+          sessionType,
+          struggle: userStruggle,
+          goal: goal,
+          count: 12, // Default count for curated sessions
+        },
+        authToken
+      );
+
+      // Create session with card's audio settings
+      const payload = {
+        title: goal,
+        goalTag: sessionType,
+        affirmations: response.affirmations,
+        voiceId: card.voiceId,
+        frequencyHz: card.brainLayerPreset === "alpha" ? 10 : card.brainLayerPreset === "beta" ? 20 : card.brainLayerPreset === "delta" ? 2 : 10,
+        brainwaveState: card.brainLayerPreset.charAt(0).toUpperCase() + card.brainLayerPreset.slice(1),
+        solfeggioHz: undefined,
+      };
+
+      const res = await apiPost<SessionV3>("/sessions", payload, authToken);
+      
+      // Track session start event
+      try {
+        await apiPost(`/sessions/${res.id}/events`, {
+          eventType: "start",
+          metadata: { source: "curation_card", cardSlot: card.slot },
+        }, authToken);
+      } catch (err) {
+        // Non-critical, continue
+      }
+
+      setIsGenerating(false);
+      
+      // Navigate to Player
+      navigation.getParent()?.navigate("Player", { sessionId: res.id });
+    } catch (error) {
+      setIsGenerating(false);
+      console.error("[HomeScreen] Error handling curation card:", error);
+      Alert.alert("Failed to Start", "Could not create session from recommendation. Please try again.");
+    }
+  }, [authToken, navigation, setIsGenerating]);
+
   // Format last session metadata
   const getLastSessionMetadata = () => {
     if (!lastSession) return "";
@@ -285,9 +412,25 @@ export default function HomeScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>WELCOME BACK.</Text>
-          <Text style={styles.headerSubtitle}>What are we reinforcing today?</Text>
+          <View style={styles.headerTop}>
+            <View style={styles.headerText}>
+              <Text style={styles.headerGreeting}>It's great to see you.</Text>
+              <Text style={styles.headerSubtitle}>What do you need to hear today?</Text>
+            </View>
+            <Pressable 
+              style={styles.profileButton}
+              onPress={() => navigation.getParent()?.navigate("Settings")}
+            >
+              <LinearGradient
+                colors={["#6c757d", "#495057"]}
+                style={styles.profileImage}
+              />
+            </Pressable>
+          </View>
         </View>
+
+        {/* API Connection Status (dev only) */}
+        {__DEV__ && <ApiConnectionStatus />}
 
         {/* Intention Input */}
         <View style={styles.inputSection}>
@@ -295,8 +438,8 @@ export default function HomeScreen({ navigation }: any) {
             <TextInput
               ref={inputRef}
               style={styles.input}
-              placeholder="Start typing here…"
-              placeholderTextColor={theme.colors.text.tertiary}
+              placeholder="What do you need to hear today?"
+              placeholderTextColor={theme.colors.text.muted}
               value={inputText}
               onChangeText={handleInputChange}
               multiline
@@ -461,23 +604,14 @@ export default function HomeScreen({ navigation }: any) {
           </View>
         )}
 
-        {/* Recent Intentions */}
-        {!reviewPack && recentIntentions.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>RECENT INTENTIONS</Text>
-            {recentIntentions.slice(0, 5).map((intention) => (
-              <Pressable
-                key={intention.id}
-                style={styles.recentItem}
-                onPress={() => handleRecentIntentionPress(intention)}
-              >
-                <Text style={styles.recentItemText} numberOfLines={1}>
-                  {intention.text}
-                </Text>
-                <MaterialIcons name="chevron-right" size={20} color={theme.colors.text.tertiary} />
-              </Pressable>
-            ))}
-          </View>
+        {/* FOR YOU Section */}
+        {!reviewPack && (
+          <>
+            <ForYouSection onCardPress={handleCurationCardPress} />
+            <View style={styles.section}>
+              <TuneForYou />
+            </View>
+          </>
         )}
 
         <View style={{ height: 100 }} />
@@ -504,19 +638,37 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing[12],
     paddingBottom: theme.spacing[6],
   },
-  headerTitle: {
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[4],
+  },
+  headerText: {
+    flex: 1,
+  },
+  headerGreeting: {
     fontFamily: theme.typography.fontFamily.bold,
-    fontSize: 32,
-    fontWeight: "800",
+    fontSize: 24,
+    fontWeight: "700",
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing[2],
-    letterSpacing: -0.5,
+    marginBottom: theme.spacing[1],
   },
   headerSubtitle: {
     fontFamily: theme.typography.fontFamily.regular,
-    fontSize: 16,
+    fontSize: 17, // Slightly larger for more inviting feel
     color: theme.colors.text.secondary,
-    lineHeight: 22,
+    lineHeight: 24, // More relaxed
+  },
+  profileButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: "hidden",
+  },
+  profileImage: {
+    width: "100%",
+    height: "100%",
   },
   inputSection: {
     paddingHorizontal: theme.spacing[6],
@@ -524,23 +676,29 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     position: "relative",
-    backgroundColor: theme.colors.background.surfaceElevated,
-    borderRadius: theme.radius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-    minHeight: 100,
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: theme.spacing[4],
-    paddingBottom: theme.spacing[4],
+    backgroundColor: theme.colors.background.surface,
+    borderRadius: theme.radius["2xl"], // Much more curved - 32px
+    borderWidth: 0, // Remove border for softer look
+    minHeight: 120,
+    paddingHorizontal: theme.spacing[6], // More generous padding
+    paddingTop: theme.spacing[6],
+    paddingBottom: theme.spacing[6],
+    // Soft shadow instead of border for depth
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   input: {
     fontFamily: theme.typography.fontFamily.regular,
-    fontSize: 16,
+    fontSize: 17, // Slightly larger for more inviting feel
     color: theme.colors.text.primary,
-    lineHeight: 22,
-    minHeight: 60,
+    lineHeight: 26, // More relaxed line height
+    minHeight: 72,
     textAlignVertical: "top",
     paddingRight: 32, // Space for clear button
+    // Subtle curved interior feel with padding
   },
   clearButton: {
     position: "absolute",
@@ -629,12 +787,17 @@ const styles = StyleSheet.create({
   continueCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: theme.colors.background.surfaceElevated,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing[4],
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    backgroundColor: theme.colors.background.surface,
+    borderRadius: theme.radius.xl, // More curved
+    padding: theme.spacing[5], // More generous padding
+    borderWidth: 0, // Remove border
     gap: theme.spacing[3],
+    // Soft shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   continueCardLeft: {
     marginRight: theme.spacing[2],
@@ -667,13 +830,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-    backgroundColor: theme.colors.background.surfaceElevated,
-    borderRadius: theme.radius.md,
-    marginBottom: theme.spacing[2],
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
+    paddingVertical: theme.spacing[4], // More vertical padding
+    paddingHorizontal: theme.spacing[5], // More horizontal padding
+    backgroundColor: theme.colors.background.surface,
+    borderRadius: theme.radius.lg, // More curved
+    marginBottom: theme.spacing[3],
+    borderWidth: 0, // Remove border
+    // Soft shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   recentItemText: {
     flex: 1,
@@ -700,15 +868,20 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
-    borderRadius: theme.radius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.xl, // More curved
+    borderWidth: 0, // Remove border for softer look
+    backgroundColor: theme.colors.background.surface,
     alignItems: "center",
+    // Subtle shadow instead
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   countOptionActive: {
-    borderColor: theme.colors.accent.primary,
-    backgroundColor: theme.colors.accent.primary + "20",
+    backgroundColor: theme.colors.accent.primary + "15", // Softer active state
+    // Remove border, use background color change only
   },
   countOptionText: {
     fontFamily: theme.typography.fontFamily.medium,

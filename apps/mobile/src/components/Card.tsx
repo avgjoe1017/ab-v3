@@ -1,5 +1,11 @@
 import React from "react";
-import { View, StyleSheet, ViewStyle, Pressable, PressableProps } from "react-native";
+import { View, StyleSheet, ViewStyle, Pressable, PressableProps, Platform } from "react-native";
+import * as Haptics from "expo-haptics";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from "react-native-reanimated";
 import { theme } from "../theme";
 
 interface CardProps extends Omit<PressableProps, "style"> {
@@ -7,6 +13,8 @@ interface CardProps extends Omit<PressableProps, "style"> {
   style?: ViewStyle | ViewStyle[];
   variant?: "default" | "elevated" | "surface";
   onPress?: () => void;
+  animated?: boolean;
+  haptic?: boolean;
 }
 
 /**
@@ -17,8 +25,66 @@ export const Card: React.FC<CardProps> = ({
   style,
   variant = "default",
   onPress,
+  animated = true,
+  haptic = true,
   ...pressableProps
 }) => {
+  // Animation values for subtle press feedback
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+
+  // Trigger haptic feedback
+  const triggerHapticFeedback = () => {
+    if (haptic && onPress) {
+      if (Platform.OS === "ios") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } else if (Platform.OS === "android") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    }
+  };
+
+  // Animation handlers
+  const handlePressIn = () => {
+    "worklet";
+    triggerHapticFeedback();
+    if (animated) {
+      scale.value = withSpring(0.98, {
+        damping: 20,
+        stiffness: 300,
+        mass: 0.5,
+      });
+      opacity.value = withSpring(0.96, {
+        damping: 20,
+        stiffness: 300,
+      });
+    }
+  };
+
+  const handlePressOut = () => {
+    "worklet";
+    if (animated) {
+      scale.value = withSpring(1, {
+        damping: 20,
+        stiffness: 300,
+        mass: 0.8,
+      });
+      opacity.value = withSpring(1, {
+        damping: 20,
+        stiffness: 300,
+      });
+    }
+  };
+
+  // Animated styles
+  const animatedStyle = useAnimatedStyle(() => {
+    if (!animated) return {};
+    return {
+      transform: [{ scale: scale.value }],
+      opacity: opacity.value,
+    };
+  });
+
   const cardStyle = [
     styles.card,
     variant === "elevated" && styles.cardElevated,
@@ -29,14 +95,13 @@ export const Card: React.FC<CardProps> = ({
   if (onPress) {
     return (
       <Pressable
-        style={({ pressed }) => [
-          cardStyle,
-          pressed && styles.cardPressed,
-        ]}
+        style={cardStyle}
         onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         {...pressableProps}
       >
-        {children}
+        <Animated.View style={animatedStyle}>{children}</Animated.View>
       </Pressable>
     );
   }
@@ -62,10 +127,6 @@ const styles = StyleSheet.create({
   cardSurface: {
     backgroundColor: theme.colors.background.surfaceSubtle,
     borderColor: theme.colors.border.glass,
-  },
-  cardPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.99 }],
   },
 });
 

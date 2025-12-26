@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { View, Text, StyleSheet, Animated, Platform } from "react-native";
+import React, { useEffect, useState, useMemo, useRef } from "react";
+import { View, Text, StyleSheet, Animated, Platform, Easing } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -48,6 +48,11 @@ export default function AudioGenerationLoadingScreen({ route, navigation }: any)
   
   // Early track player (background only - started before affirmations ready)
   const [earlyBgPlayer, setEarlyBgPlayer] = useState<AudioPlayer | null>(null);
+  
+  // Breathing orb animations (same as player screen - this is the player seed)
+  const orbScaleAnim = useRef(new Animated.Value(1)).current;
+  const orbOpacityAnim = useRef(new Animated.Value(0.5)).current;
+  const shimmerOpacityAnim = useRef(new Animated.Value(0.3)).current;
 
   // Fetch session details for metadata
   const { data: sessionData } = useQuery({
@@ -271,6 +276,78 @@ export default function AudioGenerationLoadingScreen({ route, navigation }: any)
 
   const currentStepConfig = PROGRESS_STEPS.find(step => step.key === currentStep) || PROGRESS_STEPS[0];
 
+  // Breathing orb animation - very slow breathing (±3–4% scale on 7s loop)
+  useEffect(() => {
+    const breathingAnimation = Animated.loop(
+      Animated.sequence([
+        // Breathe in (inhale) - 3.5s
+        Animated.parallel([
+          Animated.timing(orbScaleAnim, {
+            toValue: 1.035, // +3.5% scale
+            duration: 3500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(orbOpacityAnim, {
+            toValue: 0.6,
+            duration: 3500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]),
+        // Breathe out (exhale) - 3.5s
+        Animated.parallel([
+          Animated.timing(orbScaleAnim, {
+            toValue: 0.965, // -3.5% scale
+            duration: 3500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(orbOpacityAnim, {
+            toValue: 0.4,
+            duration: 3500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+    breathingAnimation.start();
+    return () => breathingAnimation.stop();
+  }, [orbScaleAnim, orbOpacityAnim]);
+
+  // Shimmer opacity animation during "generating" step
+  useEffect(() => {
+    if (currentStep === "generating") {
+      const shimmerAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(shimmerOpacityAnim, {
+            toValue: 0.6,
+            duration: 2000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(shimmerOpacityAnim, {
+            toValue: 0.3,
+            duration: 2000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      shimmerAnimation.start();
+      return () => shimmerAnimation.stop();
+    } else {
+      // Reset shimmer when not generating
+      Animated.timing(shimmerOpacityAnim, {
+        toValue: 0.3,
+        duration: 300,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [currentStep, shimmerOpacityAnim]);
+
   return (
     <AppScreen gradient={false} style={styles.screen}>
       <LinearGradient
@@ -285,16 +362,52 @@ export default function AudioGenerationLoadingScreen({ route, navigation }: any)
             },
           ]}
         >
-          {/* Audio Visualizer Icon */}
-          <View style={styles.iconContainer}>
-            <View style={styles.iconCircle}>
-              <MaterialIcons name="graphic-eq" size={48} color={theme.colors.accent.highlight} />
-            </View>
+          {/* Breathing Orb - Same as Player Screen (Player Seed) */}
+          <View style={styles.orbContainer}>
+            <Animated.View
+              style={[
+                styles.orbCircle,
+                {
+                  transform: [{ scale: orbScaleAnim }],
+                  opacity: orbOpacityAnim,
+                },
+              ]}
+            >
+              <View style={styles.orbInnerCircle} />
+            </Animated.View>
+            {/* Shimmer overlay during generating */}
+            {currentStep === "generating" && (
+              <Animated.View
+                style={[
+                  styles.orbShimmer,
+                  {
+                    opacity: shimmerOpacityAnim,
+                  },
+                ]}
+              />
+            )}
           </View>
 
           {/* Loading Message */}
-          <Text style={styles.loadingMessage}>Just a moment...</Text>
-          <Text style={styles.mainMessage}>We're building the best{'\n'}session for you!</Text>
+          {currentStep === "generating" ? (
+            <>
+              <Animated.Text
+                style={[
+                  styles.loadingMessage,
+                  {
+                    opacity: shimmerOpacityAnim.interpolate({
+                      inputRange: [0.3, 0.6],
+                      outputRange: [0.6, 1],
+                    }),
+                  },
+                ]}
+              >
+                Generating...
+              </Animated.Text>
+            </>
+          ) : (
+            <Text style={styles.loadingMessage}>Just a moment...</Text>
+          )}
 
           {/* Progress Steps */}
           <View style={styles.progressContainer}>
@@ -306,14 +419,12 @@ export default function AudioGenerationLoadingScreen({ route, navigation }: any)
                 <View key={step.key} style={styles.progressStep}>
                   <View
                     style={[
-                      styles.radioButton,
-                      isActive && styles.radioButtonActive,
-                      isCompleted && styles.radioButtonCompleted,
+                      styles.progressDot,
+                      isActive && styles.progressDotActive,
+                      isCompleted && styles.progressDotCompleted,
                     ]}
                   >
-                    {isCompleted && (
-                      <MaterialIcons name="check" size={16} color="#ffffff" />
-                    )}
+                    {/* Soft filled dot - no checkmark */}
                   </View>
                   <View style={styles.stepTextContainer}>
                     <Text
@@ -348,36 +459,42 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: theme.spacing[6],
   },
-  iconContainer: {
-    marginBottom: theme.spacing[8],
+  orbContainer: {
+    width: "100%",
+    height: 240,
     alignItems: "center",
-  },
-  iconCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: theme.colors.accent.highlight,
     justifyContent: "center",
+    marginBottom: theme.spacing[8],
+    position: "relative",
+  },
+  orbCircle: {
+    width: 180, // Same size as player screen
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: theme.colors.accent.highlight,
     alignItems: "center",
-    shadowColor: theme.colors.accent.highlight,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    justifyContent: "center",
+  },
+  orbInnerCircle: {
+    width: 90, // Same as player screen
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: theme.colors.background.primary,
+    opacity: 0.3,
+  },
+  orbShimmer: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: theme.colors.accent.highlight,
+    opacity: 0.2,
   },
   loadingMessage: {
     ...theme.typography.styles.body,
     fontSize: theme.typography.fontSize.base,
     color: theme.colors.text.secondary,
-    marginBottom: theme.spacing[2],
-    textAlign: "center",
-  },
-  mainMessage: {
-    ...theme.typography.styles.h1,
-    fontSize: 24,
-    fontWeight: theme.typography.fontWeight.bold,
-    color: theme.colors.text.primary,
-    marginBottom: theme.spacing[12],
+    marginBottom: theme.spacing[8],
     textAlign: "center",
   },
   progressContainer: {
@@ -389,23 +506,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: theme.spacing[4],
   },
-  radioButton: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: theme.colors.border.default,
-    backgroundColor: "transparent",
-    justifyContent: "center",
-    alignItems: "center",
+  progressDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: theme.colors.border.default,
+    opacity: 0.4,
   },
-  radioButtonActive: {
-    borderColor: theme.colors.accent.highlight,
+  progressDotActive: {
     backgroundColor: theme.colors.accent.highlight,
+    opacity: 0.8,
+    // Subtle glow for active state
+    shadowColor: theme.colors.accent.highlight,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  radioButtonCompleted: {
-    borderColor: theme.colors.accent.highlight,
+  progressDotCompleted: {
     backgroundColor: theme.colors.accent.highlight,
+    opacity: 0.6,
+    // Softer glow for completed state
+    shadowColor: theme.colors.accent.highlight,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 1,
   },
   stepTextContainer: {
     flex: 1,

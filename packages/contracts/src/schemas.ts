@@ -42,7 +42,7 @@ export type DraftSession = z.infer<typeof DraftSessionSchema>;
 export const SessionV3Schema = z.object({
   schemaVersion: z.literal(3),
   id: UUID,
-  ownerUserId: z.string().uuid().nullable(),
+  ownerUserId: z.string().nullable(), // Changed from .uuid() to accept Clerk user IDs (e.g., "user_xxx")
   source: z.enum(["catalog", "user", "generated"]),
   title: z.string().min(1),
   goalTag: z.string().optional(),

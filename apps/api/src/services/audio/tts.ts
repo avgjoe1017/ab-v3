@@ -129,9 +129,9 @@ async function generateOpenAITTS(
   const model = "tts-1"; // or "tts-1-hd" for higher quality (more expensive)
   const voice = mapVoiceIdToOpenAI(options.voiceId);
   
-  // Adjust speed based on pace (slow = 0.9, normal = 1.0, fast = 1.1)
-  // V3 uses "slow" pace only, so default to 0.9
-  const speed = options.pace === "slow" ? 0.9 : options.pace === "fast" ? 1.1 : 1.0;
+  // Adjust speed based on pace (slow = 0.75 for meditative, normal = 1.0, fast = 1.1)
+  // V3 uses "slow" pace only, set to 0.75 for slower, more meditative delivery
+  const speed = options.pace === "slow" ? 0.75 : options.pace === "fast" ? 1.1 : 1.0;
   
   // For variant 2, slightly adjust speed to create prosody variation
   const variantSpeed = options.variant === 2 ? speed * 1.02 : speed;
@@ -216,10 +216,11 @@ async function generateElevenLabsTTSWithTimestamps(
   // Meditative/ASMR settings: Lower stability = slower, more deliberate delivery
   // Lower similarity_boost = softer, more relaxed tone
   // These settings create a calming, ASMR-like quality with slower pacing
+  // Reduced stability further for even slower, more meditative delivery
   // Variant 1: Slightly more stable for consistency
   // Variant 2: Slightly less stable for natural prosody variation
-  const stability = options.variant === 1 ? 0.35 : 0.3;
-  const similarityBoost = options.variant === 1 ? 0.6 : 0.55;
+  const stability = options.variant === 1 ? 0.25 : 0.2;
+  const similarityBoost = options.variant === 1 ? 0.5 : 0.45;
 
   // Use the "with-timestamps" endpoint to get word-level timing
   // API docs: https://elevenlabs.io/docs/api-reference/text-to-speech-with-timestamps
@@ -357,8 +358,9 @@ async function generateElevenLabsTTSFallback(
   }
 
   const voiceId = mapVoiceIdToElevenLabs(options.voiceId);
-  const stability = options.variant === 1 ? 0.35 : 0.3;
-  const similarityBoost = options.variant === 1 ? 0.6 : 0.55;
+  // Reduced stability for slower, more meditative delivery
+  const stability = options.variant === 1 ? 0.25 : 0.2;
+  const similarityBoost = options.variant === 1 ? 0.5 : 0.45;
 
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -460,8 +462,9 @@ async function generateAzureTTS(
   const accessToken = await tokenResponse.text();
   const voice = mapVoiceIdToAzure(options.voiceId);
   
-  // Adjust prosody for variant 2
-  const prosodyRate = options.variant === 2 ? "1.02" : "1.0"; // Slight speed increase for variation
+  // Adjust prosody for slower, meditative delivery
+  // Lower rate = slower speech (0.75 = 75% speed for meditative pace)
+  const prosodyRate = options.variant === 2 ? "0.77" : "0.75"; // Slower for meditative delivery
 
   // Use SSML for prosody control
   const ssml = `

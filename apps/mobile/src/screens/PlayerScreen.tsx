@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, Platform } from "react-native";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { View, Text, Pressable, StyleSheet, ScrollView, Platform, Animated, Easing } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import { apiGet, apiPost, ApiError } from "../lib/api";
 import { PlaybackBundleVMSchema, type PlaybackBundleVM } from "@ab/contracts";
 import { getAudioEngine, type AudioEngineSnapshot } from "@ab/audio-engine";
 import Slider from "@react-native-community/slider";
-import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation, MicroVisualizer, LoudnessSparkline, Waveform } from "../components";
+import { AppScreen, IconButton, PlayerMenu, PrimaryButton, SaveMixPresetSheet, PrimerAnimation, LivingOrb } from "../components";
 import { theme } from "../theme";
 import { useSleepTimer } from "../hooks/useSleepTimer";
 import { saveMixPreset } from "../storage/mixPresets";
@@ -31,14 +31,27 @@ function isAudioNotReadyError(err: unknown): boolean {
   return false;
 }
 
+// Helper to convert mix value (0-1) to Low/Medium/High label
+function getMixLabel(value: number): string {
+  if (value < 0.33) return "Low";
+  if (value < 0.67) return "Medium";
+  return "High";
+}
+
+// LivingOrb component is now imported from components
+
 export default function PlayerScreen({ route, navigation }: any) {
   const sessionId: string = route.params.sessionId;
   const [isGenerating, setIsGenerating] = useState(false);
   const [mixPanelOpen, setMixPanelOpen] = useState(false);
+  const [mixPanelExpanded, setMixPanelExpanded] = useState(false); // New state for slider expansion
   const [menuOpen, setMenuOpen] = useState(false);
   const [saveMixSheetOpen, setSaveMixSheetOpen] = useState(false);
   const { duration: sleepTimerDuration, timeRemaining, setSleepTimer, clearSleepTimer } = useSleepTimer();
   const queryClient = useQueryClient();
+  
+  // Animated value for play button breathing glow
+  const glowOpacity = useRef(new Animated.Value(0)).current;
 
   // Fetch session details for title/metadata
   const { data: sessionData } = useQuery({
@@ -254,6 +267,36 @@ export default function PlayerScreen({ route, navigation }: any) {
   const canPlay = status === "ready" || status === "paused" || status === "idle";
   const [primerVisible, setPrimerVisible] = React.useState(false);
 
+  // Breathing glow animation for play button (only when playing)
+  useEffect(() => {
+    if (isPlaying || isPreroll) {
+      // Start breathing animation
+      const breathingAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowOpacity, {
+            toValue: 1,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowOpacity, {
+            toValue: 0.3,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      breathingAnimation.start();
+      return () => breathingAnimation.stop();
+    } else {
+      // Fade out glow when paused
+      Animated.timing(glowOpacity, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isPlaying, isPreroll, glowOpacity]);
+
   // Show primer animation during preroll
   React.useEffect(() => {
     if (isPreroll && !primerVisible) {
@@ -375,82 +418,55 @@ export default function PlayerScreen({ route, navigation }: any) {
         {/* Main Content Card */}
         {!error && (
           <View style={styles.mainCard}>
-            <View style={styles.mainCardHeader}>
-              <Text style={styles.sessionTitle}>{sessionTitle}</Text>
-              {frequencyDisplay && (
-                <Text style={styles.sessionSubtitle}>
-                  Currently playing: {frequencyDisplay} waves
-                </Text>
-              )}
-            </View>
-
-            {/* Audio Visualization - Waveform */}
+            {/* Audio Visualization - Living Orb */}
             <View style={styles.audioVizContainer}>
-              <Waveform
-                height={64}
-                color={theme.colors.accent.highlight}
-                cycles={2.5}
-                isPlaying={isPlaying || isPreroll}
-                amplitude={0.5}
-                speed={3000}
-                style={{ flex: 1, width: "100%" }}
-              />
+              <LivingOrb size={240} />
             </View>
-
           </View>
         )}
 
         {/* Playback Controls */}
         {!error && (
           <View style={styles.controlsCard}>
-            <Pressable 
-              style={[styles.controlButton, !canPlay && styles.controlButtonDisabled]}
-              onPress={() => {
-                if (canPlay && snapshot.positionMs > 0) {
-                  const newPosition = Math.max(0, snapshot.positionMs - 10000);
-                  engine.seek(newPosition);
-                }
-              }}
-              disabled={!canPlay}
-            >
-              <MaterialIcons 
-                name="skip-previous" 
-                size={36} 
-                color={canPlay ? theme.colors.text.primary : theme.colors.text.muted} 
+            <View style={styles.playButtonContainer}>
+              {/* Breathing glow - only visible when playing */}
+              <Animated.View
+                style={[
+                  styles.playButtonGlow,
+                  {
+                    opacity: glowOpacity,
+                  },
+                ]}
               />
-            </Pressable>
-            <Pressable
-              style={styles.playButton}
-              onPress={() => {
-                if (isPlaying) {
-                  engine.pause();
-                } else if (canPlay) {
-                  engine.play();
-                }
-              }}
-            >
-            <MaterialIcons 
-              name={(isPlaying || isPreroll) ? "pause" : "play-arrow"} 
-              size={36} 
-              color={theme.colors.background.primary} 
-            />
-            </Pressable>
-            <Pressable 
-              style={[styles.controlButton, !canPlay && styles.controlButtonDisabled]}
-              onPress={() => {
-                if (canPlay) {
-                  const newPosition = snapshot.positionMs + 10000;
-                  engine.seek(newPosition);
-                }
-              }}
-              disabled={!canPlay}
-            >
-              <MaterialIcons 
-                name="skip-next" 
-                size={36} 
-                color={canPlay ? theme.colors.text.primary : theme.colors.text.muted} 
-              />
-            </Pressable>
+              <Pressable
+                style={styles.playButton}
+                onPress={() => {
+                  if (isPlaying) {
+                    engine.pause();
+                  } else if (canPlay) {
+                    engine.play();
+                  }
+                }}
+              >
+                <MaterialIcons 
+                  name={(isPlaying || isPreroll) ? "pause" : "play-arrow"} 
+                  size={40} 
+                  color={theme.colors.background.primary} 
+                />
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Session Title and Details - Moved to Bottom */}
+        {!error && (
+          <View style={styles.sessionInfoContainer}>
+            <Text style={styles.sessionTitle}>{sessionTitle}</Text>
+            {frequencyDisplay && (
+              <Text style={styles.sessionSubtitle}>
+                Currently playing: {frequencyDisplay} waves
+              </Text>
+            )}
           </View>
         )}
 
@@ -459,7 +475,19 @@ export default function PlayerScreen({ route, navigation }: any) {
           <View style={[styles.mixPanel, mixPanelOpen && styles.mixPanelOpen]}>
             <Pressable
               style={styles.mixPanelHeader}
-              onPress={() => setMixPanelOpen(!mixPanelOpen)}
+              onPress={() => {
+                const newOpen = !mixPanelOpen;
+                setMixPanelOpen(newOpen);
+                // Reset expanded state when closing panel
+                if (!newOpen) {
+                  setMixPanelExpanded(false);
+                }
+              }}
+              onLongPress={() => {
+                if (mixPanelOpen) {
+                  setMixPanelExpanded(!mixPanelExpanded);
+                }
+              }}
             >
               <View style={styles.mixPanelHeaderLeft}>
                 <MaterialIcons name="tune" size={24} color={theme.colors.accent.highlight} />
@@ -479,25 +507,24 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <View style={styles.mixControlHeader}>
                     <Text style={styles.mixControlLabel}>Affirmations</Text>
                     <View style={styles.mixControlRight}>
-                      <LoudnessSparkline
-                        data={[12, 14, 13, 15, 14, 16, 15, 14, 13, 15]}
-                        width={50}
-                        height={16}
-                        color={theme.colors.accent.highlight}
-                      />
-                      <Text style={styles.mixControlValue}>{Math.round(mix.affirmations * 100)}%</Text>
+                      <View style={styles.mixBarContainer}>
+                        <View style={[styles.mixBar, { width: `${mix.affirmations * 100}%` }]} />
+                      </View>
+                      <Text style={styles.mixControlValue}>{getMixLabel(mix.affirmations)}</Text>
                     </View>
                   </View>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={0}
-                    maximumValue={100}
-                    value={mix.affirmations * 100}
-                    onValueChange={(value) => engine.setMix({ ...mix, affirmations: value / 100 })}
-                    minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
-                    thumbTintColor={theme.colors.accent.highlight}
-                  />
+                  {mixPanelExpanded && (
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={100}
+                      value={mix.affirmations * 100}
+                      onValueChange={(value) => engine.setMix({ ...mix, affirmations: value / 100 })}
+                      minimumTrackTintColor={theme.colors.accent.highlight}
+                      maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
+                      thumbTintColor={theme.colors.accent.highlight}
+                    />
+                  )}
                 </View>
 
                 {/* Brain Layer (Binaural or Solfeggio) */}
@@ -507,25 +534,24 @@ export default function PlayerScreen({ route, navigation }: any) {
                       {data?.solfeggio ? "Solfeggio Frequency" : "Binaural Frequency"}
                     </Text>
                     <View style={styles.mixControlRight}>
-                      <LoudnessSparkline
-                        data={[10, 11, 10, 12, 11, 13, 12, 11, 10, 12]}
-                        width={50}
-                        height={16}
-                        color={theme.colors.accent.highlight}
-                      />
-                      <Text style={styles.mixControlValue}>{Math.round(mix.binaural * 100)}%</Text>
+                      <View style={styles.mixBarContainer}>
+                        <View style={[styles.mixBar, { width: `${mix.binaural * 100}%` }]} />
+                      </View>
+                      <Text style={styles.mixControlValue}>{getMixLabel(mix.binaural)}</Text>
                     </View>
                   </View>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={0}
-                    maximumValue={100}
-                    value={mix.binaural * 100}
-                    onValueChange={(value) => engine.setMix({ ...mix, binaural: value / 100 })}
-                    minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
-                    thumbTintColor={theme.colors.accent.highlight}
-                  />
+                  {mixPanelExpanded && (
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={100}
+                      value={mix.binaural * 100}
+                      onValueChange={(value) => engine.setMix({ ...mix, binaural: value / 100 })}
+                      minimumTrackTintColor={theme.colors.accent.highlight}
+                      maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
+                      thumbTintColor={theme.colors.accent.highlight}
+                    />
+                  )}
                 </View>
 
                 {/* Atmosphere */}
@@ -533,25 +559,24 @@ export default function PlayerScreen({ route, navigation }: any) {
                   <View style={styles.mixControlHeader}>
                     <Text style={styles.mixControlLabel}>Atmosphere</Text>
                     <View style={styles.mixControlRight}>
-                      <LoudnessSparkline
-                        data={[8, 9, 8, 10, 9, 11, 10, 9, 8, 10]}
-                        width={50}
-                        height={16}
-                        color={theme.colors.accent.highlight}
-                      />
-                      <Text style={styles.mixControlValue}>{Math.round(mix.background * 100)}%</Text>
+                      <View style={styles.mixBarContainer}>
+                        <View style={[styles.mixBar, { width: `${mix.background * 100}%` }]} />
+                      </View>
+                      <Text style={styles.mixControlValue}>{getMixLabel(mix.background)}</Text>
                     </View>
                   </View>
-                  <Slider
-                    style={styles.slider}
-                    minimumValue={0}
-                    maximumValue={100}
-                    value={mix.background * 100}
-                    onValueChange={(value) => engine.setMix({ ...mix, background: value / 100 })}
-                    minimumTrackTintColor={theme.colors.accent.highlight}
-                    maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
-                    thumbTintColor={theme.colors.accent.highlight}
-                  />
+                  {mixPanelExpanded && (
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={100}
+                      value={mix.background * 100}
+                      onValueChange={(value) => engine.setMix({ ...mix, background: value / 100 })}
+                      minimumTrackTintColor={theme.colors.accent.highlight}
+                      maximumTrackTintColor="rgba(0, 0, 0, 0.1)"
+                      thumbTintColor={theme.colors.accent.highlight}
+                    />
+                  )}
                 </View>
               </View>
             )}
@@ -657,17 +682,15 @@ const styles = StyleSheet.create({
     // Soft frosted glass effect
     ...theme.shadows.glass,
   },
-  mainCardHeader: {
-    marginBottom: theme.spacing[6],
-  },
   sessionTitle: {
     fontFamily: theme.typography.fontFamily.semibold,
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "600",
-    lineHeight: 34,
+    lineHeight: 30,
     letterSpacing: -0.3,
     color: theme.colors.text.primary,
-    marginBottom: theme.spacing[1],
+    marginBottom: theme.spacing[2],
+    textAlign: "center",
   },
   sessionSubtitle: {
     fontFamily: theme.typography.fontFamily.regular,
@@ -676,15 +699,14 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: 0.1,
     color: theme.colors.text.tertiary,
+    textAlign: "center",
   },
   audioVizContainer: {
-    flexDirection: "row",
+    width: "100%",
+    height: 240,
     alignItems: "center",
-    justifyContent: "space-between",
-    height: 64,
+    justifyContent: "center",
     marginBottom: theme.spacing[6],
-    paddingHorizontal: theme.spacing[1],
-    gap: 2,
   },
   audioBar: {
     width: 4,
@@ -716,27 +738,46 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing[4],
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-around",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: theme.colors.border.glass,
     // Soft frosted glass effect
     ...theme.shadows.glass,
   },
-  controlButton: {
-    padding: theme.spacing[4],
+  sessionInfoContainer: {
+    backgroundColor: theme.colors.background.surfaceElevated,
+    borderRadius: theme.radius.xl,
+    padding: theme.spacing[5],
+    marginBottom: theme.spacing[4],
+    borderWidth: 1,
+    borderColor: theme.colors.border.glass,
+    alignItems: "center",
+    ...theme.shadows.glass,
   },
-  controlButtonDisabled: {
-    opacity: 0.5,
+  playButtonContainer: {
+    position: "relative",
+    width: 96,
+    height: 96,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  playButtonGlow: {
+    position: "absolute",
+    width: 96,
+    height: 96,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.accent.highlight,
+    ...theme.shadows.glow.highlight,
   },
   playButton: {
-    width: 80,
-    height: 80,
+    width: 96,
+    height: 96,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: theme.colors.accent.highlight,
     borderRadius: theme.radius.full,
-    ...theme.shadows.glow.highlight,
+    zIndex: 1,
   },
   mixPanel: {
     backgroundColor: "rgba(255, 255, 255, 0.85)", // High-blur glass effect
@@ -786,6 +827,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    flex: 1,
+    justifyContent: "flex-end",
   },
   mixControlLabel: {
     ...theme.typography.styles.body,
@@ -794,7 +837,22 @@ const styles = StyleSheet.create({
   mixControlValue: {
     ...theme.typography.styles.body,
     color: theme.colors.text.tertiary,
-    opacity: 0.7,
+    minWidth: 60,
+    textAlign: "right",
+  },
+  mixBarContainer: {
+    width: 60,
+    height: 4,
+    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    borderRadius: theme.radius.sm,
+    marginRight: theme.spacing[3],
+    overflow: "hidden",
+  },
+  mixBar: {
+    height: 4,
+    backgroundColor: theme.colors.accent.highlight,
+    borderRadius: theme.radius.sm,
+    minWidth: 2,
   },
   slider: {
     width: "100%",

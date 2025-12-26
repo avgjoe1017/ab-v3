@@ -2,7 +2,297 @@
 
 **Date**: January 2025
 **Status**: Core Architecture Complete & Hardened
-**Last Updated**: 2025-12-24 07:09:00 (Content Moderation System Implementation)
+**Last Updated**: 2025-01-15 (LivingOrb Implementation - ENDEL-style Animated Orb)
+
+---
+
+## 2025-01-15 - LivingOrb Implementation (ENDEL-style Animated Orb) - BLACK SCREEN FIX
+
+### Summary
+Implemented a sophisticated "living orb" visualization component using `@shopify/react-native-skia` to replace the simple breathing circle in the player screen. The orb features organic blob animations, glow effects, and a breathing ring that syncs with audio playback, creating an ENDEL-style ambient visualization.
+
+### Issue: Black Screen
+**Problem**: After implementing LivingOrb, the screen goes black with error "Expected arraybuffer as first parameter".
+
+**Root Cause**: 
+1. Skia version mismatch - Expo installed version 2.2.12 (SDK 54 compatible) instead of 2.4.14
+2. Skia requires a **development build** - it does NOT work with Expo Go (it needs native code compilation)
+3. The app needs to be rebuilt natively after adding Skia
+
+**Fix Applied**:
+1. ✅ Updated Skia to Expo SDK 54 compatible version (2.2.12)
+2. ✅ Added error handling and fallback UI for when Skia is not available
+3. ✅ Wrapped Canvas in View container for better rendering
+4. ⚠️ **Action Required**: App must be rebuilt as a development build (not Expo Go)
+
+**To Fix Black Screen**:
+```bash
+# Create a development build (required for Skia)
+cd apps/mobile
+npx expo prebuild
+npx expo run:ios  # or npx expo run:android
+```
+
+**Alternative**: If development build is not possible immediately, the component now has a fallback that shows a simple circle instead of the animated orb.
+
+### Implementation Details
+1. **Installed @shopify/react-native-skia**: Added the Skia graphics library to enable GPU-accelerated, performant animations that run on the UI thread without blocking React state updates.
+
+2. **Created LivingOrb Component** (`apps/mobile/src/components/LivingOrb.tsx`):
+   - **Core Blob**: Wobbly, organic-shaped blob using cubic Bézier curves with dual-layer rendering for depth
+   - **Halo Glow**: Outer glow layer with high blur (26px) and lower opacity for a bloom effect
+   - **Breath Ring**: Animated ring that expands on inhale and contracts on exhale, providing a visual breathing cue
+   - **Animation System**: Uses `useClock()` for stable time-based animation and `usePathValue()` for efficient path mutations in worklets
+   - **Breathing Rhythm**: Configurable timing (default: 4200ms inhale, 400ms hold, 5200ms exhale, 400ms rest)
+
+3. **Integration**: Replaced the `BreathingCircle` component in `PlayerScreen.tsx` with the new `LivingOrb`, positioned in the center of the audio visualization area.
+
+### Technical Decisions
+- **Why Skia**: Required for GPU-accelerated animations, blur effects, and organic motion without JS thread overhead. Essential for maintaining smooth 60fps animations while audio playback and other logic run.
+- **Dual Blob Layers**: Two overlapping blobs with different wobble speeds and lobe counts create organic, non-repetitive motion.
+- **Worklet-based Animation**: All path calculations run in worklets on the UI thread, ensuring smooth performance regardless of JS thread load.
+- **Color Palette**: Uses neutral colors (#F2F2F2 core, #FFFFFF glow) that work with the app's minimal, clean aesthetic.
+
+### Files Changed
+- `apps/mobile/package.json`: Added `@shopify/react-native-skia` dependency
+- `apps/mobile/src/components/LivingOrb.tsx`: New component (180 lines)
+- `apps/mobile/src/components/index.ts`: Added LivingOrb export
+- `apps/mobile/src/screens/PlayerScreen.tsx`: Replaced BreathingCircle with LivingOrb, updated styles
+
+### Benefits
+- **Performance**: GPU-accelerated animations run independently of React renders
+- **Visual Quality**: Professional-grade blur, glow, and organic motion
+- **User Experience**: Engaging, ambient visualization that enhances the audio experience
+- **Maintainability**: Clean, modular component that can be easily customized or extended
+
+### Future Enhancements (Optional)
+- Runtime shader layer for subtle grain, vignette, and inner glow (Skia supports RuntimeEffect)
+- Orbiting dust particles for additional depth
+- Color customization based on session type or goal tag
+- Adaptive breathing rhythm based on audio tempo or user preference
+
+---
+
+## 2025-01-15 - Windows Permission Fix for Mobile Dependencies
+
+### Summary
+Fixed Windows EPERM (permission denied) error that was preventing `pnpm install` from completing in the mobile app directory. The issue was caused by a locked `expo.EXE` file that couldn't be removed during installation.
+
+### Problem
+When running `pnpm install` in `apps/mobile`, the installation failed with:
+```
+EPERM: operation not permitted, unlink 'C:\Users\joeba\Documents\ab-v3\apps\mobile\node_modules\.bin\expo.EXE'
+```
+
+This prevented the installation from completing, which caused `react-native-gesture-handler` to be missing and resulted in module resolution errors at runtime.
+
+### Solution
+1. **Stopped running processes**: Used PowerShell to stop any Node.js or Expo processes that might be locking the file
+2. **Removed locked file**: Manually deleted the locked `expo.EXE` file from `node_modules\.bin\`
+3. **Retried installation**: Successfully completed `pnpm install` after removing the lock
+
+### Files Changed
+- No code changes, only dependency installation fix
+
+### Impact
+- All mobile app dependencies now install correctly
+- `react-native-gesture-handler` is properly installed and can be resolved
+- App should no longer show "Unable to resolve react-native-gesture-handler" errors
+- Installation process is now reliable on Windows
+
+### Technical Details
+The issue occurs on Windows when:
+- A file is locked by a running process (Expo dev server, Metro bundler, etc.)
+- The file system doesn't allow deletion of files in use
+- Multiple processes try to access the same binary file
+
+**Resolution steps for future occurrences**:
+1. Stop all Node.js/Expo processes: `Get-Process | Where-Object {$_.ProcessName -like "*node*" -or $_.ProcessName -like "*expo*"} | Stop-Process -Force`
+2. Remove locked file: `Remove-Item "node_modules\.bin\expo.EXE" -Force`
+3. Retry installation: `pnpm install`
+
+---
+
+## 2025-01-15 00:00:00 - Positive Session Title Generation
+
+### Summary
+Implemented automatic generation of positive, encouraging session titles when creating sessions. Titles are now generated based on the user's goal and goalTag, ensuring all sessions have uplifting, motivational names. Fixed issue where negative goals (e.g., "I'm tired", "I'm sad") were being prefixed with positive words, creating awkward titles like "Confident I'm tired".
+
+### Problem
+Previously, session titles were simply the user's raw goal text (truncated if too long). This could result in titles that weren't particularly inspiring or encouraging, such as "I want to focus better" or "help with anxiety". Additionally, when users entered negative states like "I'm tired" or "I'm sad", the initial implementation would prefix them with positive words, creating awkward titles like "Confident I'm tired" which defeats the purpose of positive framing.
+
+### Solution
+**Title Generation Function** (`apps/mobile/src/lib/affirmationPack.ts`):
+- Created `generateSessionTitle()` function that generates positive, encouraging titles
+- Uses goalTag when available to select context-appropriate title templates
+- Detects negative states (tired, sad, exhausted, unmotivated, stressed, anxious) and transforms them into positive titles
+- Maps negative states to encouraging alternatives:
+  - "tired/exhausted" → "Rest & Renewal", "Peaceful Restoration", "Calm & Recharged"
+  - "sad/down" → "Lift & Light", "Inner Strength & Hope", "Comfort & Healing"
+  - "unmotivated/stuck" → "Momentum & Action", "Fresh Motivation", "Forward Movement"
+  - "stressed/overwhelmed" → "Calm & Centered", "Peace & Clarity", "Release & Relief"
+- Falls back to keyword-based detection from goal text for neutral/positive goals
+- Includes title pools for: focus, sleep, meditate, anxiety-relief, wake-up
+- Examples: "Deep Focus & Clarity", "Peaceful Rest", "Calm & Confident", "Energized Morning"
+- For custom goals, filters out negative words before creating titles
+- Uses generic positive titles as fallback instead of prefixing negative language
+
+**Integration**:
+- Updated `packToSessionPayload()` to use `generateSessionTitle()` instead of raw goal text
+- All sessions created via quick generate flow now get positive titles
+- EditorScreen still allows manual title entry (preserves user control)
+
+### Files Changed
+- `apps/mobile/src/lib/affirmationPack.ts` - Added `generateSessionTitle()` function with negative state detection and transformation, integrated into `packToSessionPayload()`
+
+### Impact
+- All auto-generated sessions now have positive, encouraging titles
+- Negative user input is transformed into uplifting titles (e.g., "I'm tired" → "Rest & Renewal")
+- Titles are now more specific and context-aware, extracting meaningful keywords from goals
+- Examples: "I need motivation" → "Motivation & Success", "build confidence" → "Build Confidence & Strength"
+- Better user experience with motivational session names that never include negative language
+- Maintains flexibility for manual title entry in EditorScreen
+
+### Updates (2025-01-15)
+- **Improved specificity**: Rewrote fallback logic to extract meaningful keywords from goals instead of using generic titles
+- **Pattern matching**: Added detection for common positive goals (confidence, energy, happiness, success, love, health, creativity, courage, gratitude, patience)
+- **Keyword extraction**: Filters out stop words and negative words, then creates titles using the actual goal content
+- **Smart capitalization**: Uses cleaned goal text directly when appropriate, removing prefixes like "I'm" or "I need"
+- **Title deduplication**: Added `usedTitles` parameter to `generateSessionTitle()` and `packToSessionPayload()` to prevent reusing titles for the same user
+- **Integration**: Updated HomeScreen, QuickGenerateFlow, and GuidedFlow to fetch user's existing session titles and pass them to title generation
+- **Fallback handling**: If all titles in a category are used, falls through to next matching category or uses keyword-based generation
+
+---
+
+## 2025-01-15 00:00:00 - FOR YOU Curation System Implementation
+
+### Summary
+Implemented a comprehensive curation system that replaces "Recent Intentions" with an intelligent "FOR YOU" section. The system provides personalized session recommendations based on user behavior patterns, time of day, completion rates, and preferences.
+
+### Problem
+The previous "Recent Intentions" section was just a history log that didn't provide intelligent recommendations or help users progress through transformation paths. Users needed a system that:
+- Understands their usage patterns without feeling invasive
+- Reduces decision fatigue while maintaining control
+- Provides progression through structured paths with micro-actions
+- Feels premium and differentiated from other apps
+
+### Solution
+**Database Schema** (`apps/api/prisma/schema.prisma`):
+- Added `SessionEvent` model to track: starts, completions, abandons, replays, skip behavior, mix adjustments
+- Added `CurationPreferences` model for progressive profiling (primary goal, voice preference, sound preference)
+- Added `UserPath` model for chapter-based progression system (path tracking, step index, action completion)
+
+**API Services** (`apps/api/src/services/curation.ts`):
+- `getCurationCards()` - Generates 4-6 curated cards based on:
+  - User's session completion patterns
+  - Time of day (morning/evening/night)
+  - Abandon rates and early abandonment detection
+  - Replay behavior
+  - Active path progression (NEXT STEP card)
+- `trackSessionEvent()` - Records user interactions for pattern analysis
+- `saveCurationPreferences()` / `getCurationPreferences()` - Manages user preferences
+
+**API Endpoints** (`apps/api/src/index.ts`):
+- `GET /me/curation` - Returns curated cards
+- `POST /me/curation/preferences` - Saves user preferences
+- `GET /me/curation/preferences` - Gets user preferences
+- `POST /sessions/:id/events` - Tracks session events
+
+**Mobile Components**:
+- `ForYouSection.tsx` - Main curation section with card slots:
+  - **NEXT STEP** - Top card showing path progression with chapter info
+  - **RIGHT NOW** (2 cards) - Time-based recommendations
+  - **TONIGHT** - Evening-specific sessions
+  - **YOUR BEST** - Highest completion rate session
+  - **TRY SOMETHING NEW** - Controlled novelty injection
+- `TuneForYou.tsx` - Progressive profiling module (3 quick questions)
+- Each card includes "Why this?" affordance with one-line explanation
+
+**HomeScreen Integration** (`apps/mobile/src/screens/HomeScreen.tsx`):
+- Replaced "Recent Intentions" section with FOR YOU section
+- Added TuneForYou component below FOR YOU
+- Implemented card press handler to create sessions from curation cards
+
+### Key Features
+
+1. **Intelligent Curation Logic**:
+   - Heavily boosts sessions user completes
+   - Downranks sessions abandoned in first 90 seconds
+   - Caps repetition (no same recipe 2 days in a row)
+   - Injects controlled novelty (1 out of 5 cards)
+
+2. **Path/Chapter System**:
+   - NEXT STEP card shows progression through transformation paths
+   - Each path has 6 chapters with micro-actions
+   - Tracks action completion and self-ratings
+   - Example: "Imposter to Impact" path with evidence-building steps
+
+3. **Progressive Profiling**:
+   - "Tune Your For You" module asks 3 quick questions:
+     - Primary goal (Calm, Focus, Sleep, Confidence, Reset)
+     - Voice preference (More space, Balanced, More guidance)
+     - Sound preference (Voice-forward, Balanced, Atmosphere-forward)
+   - One-time setup, no nagging
+
+4. **Trust & Transparency**:
+   - "Why this?" button on each card
+   - One-line explanations (e.g., "You finish 10-minute sessions most")
+   - "Reset personalization" option in settings (future)
+
+### Files Created/Modified
+
+**Created**:
+- `apps/api/src/services/curation.ts` - Curation logic service
+- `apps/mobile/src/components/ForYouSection.tsx` - FOR YOU section component
+- `apps/mobile/src/components/TuneForYou.tsx` - Progressive profiling component
+- `apps/api/prisma/migrations/20250115000001_add_curation_tracking/migration.sql` - Database migration
+
+**Modified**:
+- `apps/api/prisma/schema.prisma` - Added SessionEvent, CurationPreferences, UserPath models
+- `apps/api/src/index.ts` - Added curation endpoints
+- `apps/mobile/src/screens/HomeScreen.tsx` - Replaced Recent Intentions with FOR YOU
+- `apps/mobile/src/components/index.ts` - Exported new components
+
+### Next Steps
+
+1. **Session Event Tracking**: Integrate event tracking into PlayerScreen (track starts, completions, abandons)
+2. **Path Management**: Create API endpoints for path creation and management
+3. **Mix Adjustment Tracking**: Track when users adjust voice/brain/atmosphere levels
+4. **Action Completion**: Implement micro-action tracking and check-in system
+5. **Settings Integration**: Add "Reset personalization" option in Settings screen
+
+### Decision Rationale
+
+- **Fixed 4-6 card slots**: Prevents decision overload, ensures quality over quantity
+- **Human titles over technical**: "Steady after a rough moment" vs "10Hz Alpha Session"
+- **Progressive profiling**: 3 questions is the sweet spot - enough to improve, not enough to feel like homework
+- **Path system**: Makes the app feel like a program, not just a library of sessions
+- **One-line "Why this?"**: Builds trust without overwhelming with data
+
+---
+
+## 2025-01-14 23:30:00 - Fixed API_BASE_URL Configuration Issue
+
+### Summary
+Fixed issue where `API_BASE_URL` was showing as `{}` in mobile app logs instead of resolving to the correct URL string.
+
+### Problem
+The mobile app logs showed `API_BASE_URL: {}` (empty object) instead of the expected URL string `http://192.168.86.33:8787`. The API server was running correctly, but the config wasn't resolving the URL properly due to insufficient type checking when handling `null` values from `app.json`.
+
+### Solution
+**Files Modified**:
+- `apps/mobile/src/lib/config.ts` - Added explicit type checking and string validation
+
+### Key Changes
+1. Added explicit type annotation `: string` to ensure `API_BASE_URL` is always a string
+2. Added type checks at each configuration step (`typeof value === 'string'`) to properly handle null/undefined values
+3. Added `.trim()` calls to clean up any whitespace in URL values
+4. Added validation for `physicalDeviceIP` to ensure it's a string before constructing the URL
+
+### Result
+The config now properly resolves to `http://192.168.86.33:8787` for physical iOS devices using the `PHYSICAL_DEVICE_IP` from `app.json`. The API server was verified to be running and accessible on the correct port.
+
+**Note**: Mobile app restart required for changes to take effect.
 
 ---
 
@@ -8190,3 +8480,1257 @@ Implemented comprehensive content moderation system for affirmations to ensure s
 - [ ] Consider adding moderation queue prioritization (auto-flagged first)
 
 **Stats**: 9 files modified/created, +800+ lines added, 1 migration created
+
+---
+
+## 2025-01-XX XX:XX:XX - Production Readiness Deep Dive Analysis
+
+### Summary
+Comprehensive analysis of codebase to identify all gaps for consumer-grade production deployment. Created detailed production readiness report with prioritized action items.
+
+### Analysis Scope
+- Authentication system status
+- Database migration requirements
+- Cloud storage integration
+- Error logging and monitoring
+- Testing infrastructure
+- Security hardening
+- Build and deployment
+- Environment configuration
+
+### Key Findings
+
+#### ✅ Strong Foundation
+- Well-structured monorepo architecture
+- Strong type safety with TypeScript + Zod
+- Core features fully functional
+- SDKs installed (Clerk, RevenueCat, AWS S3)
+- Basic error handling and rate limiting exist
+
+#### 🔴 Critical Blockers (Must Fix)
+1. **Authentication**: Clerk SDK installed but still using default user ID
+   - Need: Clerk account setup, environment variables, full integration
+   - Effort: 1-2 days
+   
+2. **Database Migration**: SQLite → Postgres
+   - Need: Postgres database, migration script, connection pooling
+   - Effort: 1-2 days
+   
+3. **Cloud Storage**: S3 code exists but not integrated
+   - Need: AWS setup, integrate into audio pipeline, CloudFront CDN
+   - Effort: 2-3 days
+   
+4. **Environment Configuration**: Missing `.env.example` files
+   - Need: Documentation, validation, examples
+   - Effort: 0.5 days
+
+#### 🟡 Important Improvements (Should Fix)
+1. **Error Logging & Monitoring**: No structured logging or error tracking
+2. **Testing Infrastructure**: No unit/integration/E2E tests
+3. **API Documentation**: No OpenAPI/Swagger docs
+4. **Rate Limiting**: In-memory only, needs Redis for production
+5. **Build & Deployment**: Placeholder build scripts, no CI/CD
+6. **Security Hardening**: Missing security headers, input sanitization
+
+### Implementation Roadmap
+
+**Phase 1: Critical Infrastructure (Week 1)**
+- Day 1-2: Authentication (Clerk integration)
+- Day 2-3: Database migration (SQLite → Postgres)
+- Day 3-5: Cloud storage (S3 + CloudFront)
+- Day 5: Environment configuration
+
+**Phase 2: Stability & Monitoring (Week 2)**
+- Day 1-2: Error logging (Sentry)
+- Day 2-3: Testing infrastructure
+- Day 3-4: API documentation
+- Day 4-5: Security & rate limiting
+
+**Phase 3: Polish & Optimization (Week 3)**
+- Day 1-2: Build & deployment
+- Day 2-3: Performance optimization
+- Day 3-5: Analytics & metrics
+
+### Estimated Time to Production
+**2-3 weeks** of focused development
+
+### Documentation Created
+- `MD_DOCS/PRODUCTION_READINESS_DEEP_DIVE.md` - Comprehensive analysis with:
+  - Current state assessment
+  - Critical blockers with action items
+  - Important improvements
+  - Implementation roadmap
+  - Environment variables checklist
+  - Testing checklist
+  - Deployment options
+  - Cost estimates
+  - Risk assessment
+
+### Next Steps
+1. Review production readiness report
+2. Prioritize critical blockers
+3. Begin Phase 1 implementation
+4. Set up infrastructure (Clerk, Postgres, AWS)
+5. Complete authentication integration
+6. Migrate database
+7. Integrate cloud storage
+
+**Stats**: 1 comprehensive analysis document created (~500 lines)
+
+---
+
+## 2025-01-XX XX:XX:XX - Admin App Clerk Integration Guide
+
+### Summary
+Created comprehensive guide for integrating Clerk authentication into the admin Next.js App Router application, following current best practices and avoiding deprecated patterns.
+
+### Documentation Created
+- `MD_DOCS/ADMIN_CLERK_INTEGRATION.md` - Complete integration guide covering:
+  - Installation and setup
+  - Correct `clerkMiddleware()` usage in `proxy.ts`
+  - `<ClerkProvider>` integration in `layout.tsx`
+  - Server-side and client-side authentication patterns
+  - Migration from custom auth system
+  - Common mistakes to avoid
+  - Verification checklist
+
+### Key Points
+- Uses **App Router** patterns (not deprecated Pages Router)
+- Uses `clerkMiddleware()` from `@clerk/nextjs/server` (not deprecated `authMiddleware()`)
+- Proper server/client component patterns
+- Integration with existing API server Clerk support
+- Migration path from custom authentication
+
+### Current Status
+- Admin app currently uses custom login system
+- Clerk SDK not yet installed in admin app
+- Integration guide ready for implementation
+- Estimated effort: +1 day to existing authentication work
+
+**Stats**: 1 integration guide created (~400 lines)
+
+---
+
+## 2025-01-XX XX:XX:XX - Environment Configuration Files Created
+
+### Summary
+Created `.env.example` files for all apps to document required environment variables and provide templates for configuration.
+
+### Files Created
+- `apps/api/.env.example` - API server environment variables
+- `apps/mobile/.env.example` - Mobile app environment variables  
+- `apps/admin/.env.example` - Admin app environment variables
+- `MD_DOCS/NEXT_STEPS_ACTION_PLAN.md` - Step-by-step action plan for production readiness
+
+### Key Features
+- Documented all required vs optional variables
+- Included comments explaining each variable
+- Provided examples and placeholders
+- Organized by category (Auth, DB, Storage, TTS, etc.)
+- Production vs development guidance
+
+### Next Steps
+1. Copy `.env.example` files to `.env` (or `.env.local` for Next.js)
+2. Fill in actual values from service providers
+3. Begin Clerk authentication setup (Step 2 in action plan)
+
+**Stats**: 3 environment example files + 1 action plan created
+
+---
+
+## 2025-01-XX XX:XX:XX - Clerk Authentication Successfully Integrated
+
+### Summary
+Clerk authentication is now fully working in the mobile app. Users can sign up, verify email, and sign in. The authentication flow is complete and functional.
+
+### Implementation
+1. **Created Sign-In Screen** (`apps/mobile/src/screens/SignInScreen.tsx`):
+   - Email/password sign-in and sign-up
+   - Email verification flow
+   - Error handling
+   - Matches app theme
+
+2. **Updated App.tsx**:
+   - Added authentication gate using `useAuth()` from Clerk
+   - Shows sign-in screen when not authenticated
+   - Shows main app when authenticated
+
+3. **Configuration**:
+   - Clerk publishable key configured in `app.json`
+   - Clerk secret key configured in API `.env`
+   - API server shows "Clerk configured: true"
+
+### Status
+- ✅ Clerk authentication working
+- ✅ Sign-in screen displaying correctly
+- ✅ Users can sign up and sign in
+- ✅ Email verification working
+- ✅ Authentication tokens being sent to API
+
+### Next Steps
+1. Verify user creation in database when first signing in
+2. Test API endpoints with authentication
+3. Verify user-specific data isolation
+4. Move to database migration (SQLite → Postgres)
+
+**Stats**: 1 sign-in screen created, authentication flow complete
+
+---
+
+## December 24, 2025 - Audio Metadata Fix (ffprobe-static)
+
+### Problem
+- Audio metadata extraction was failing with `ENOENT: no such file or directory, uv_spawn 'ffprobe'`
+- The `ffmpeg-static` package does NOT include `ffprobe` (only ffmpeg)
+- Metadata is needed to track usage, affirmations, durations, etc.
+
+### Solution
+1. Installed `ffprobe-static` package which provides a bundled ffprobe binary
+2. Updated `apps/api/src/services/audio/metadata.ts` to use `ffprobe-static` instead of trying to find ffprobe next to ffmpeg
+
+### Changes Made
+- Added dependency: `ffprobe-static@3.1.0`
+- Modified `getFfprobePath()` function to use `ffprobeStatic.path` directly
+
+### Why This Matters
+- Audio metadata includes duration, codec, sample rate, channels, and file size
+- Critical for tracking session duration, usage analytics, and debugging
+- Without ffprobe, all audio files were returning `durationMs: 0`
+
+### Verification
+After restarting the API server, metadata extraction should work for all audio files.
+
+---
+
+## December 24, 2025 - Google and Apple SSO Integration
+
+### Feature Added
+- Added Google and Apple social sign-in buttons to the SignInScreen
+- Integrated Clerk's `useOAuth` hook for OAuth flows
+- Added visual divider ("OR") between email/password and social sign-in options
+
+### Changes Made
+1. **Updated `apps/mobile/src/screens/SignInScreen.tsx`**:
+   - Imported `useOAuth` from `@clerk/clerk-expo`
+   - Added Google and Apple OAuth hooks: `useOAuth({ strategy: "oauth_google" })` and `useOAuth({ strategy: "oauth_apple" })`
+   - Created `handleOAuthSignIn` function to handle OAuth flow
+   - Added "OR" divider between email/password and social buttons
+   - Added styled Google (blue) and Apple (black) sign-in buttons
+
+### UI Details
+- Google button: Blue background (#4285F4) with "Continue with Google" text
+- Apple button: Black background with "Continue with Apple" text
+- Buttons are disabled during loading state
+- Error handling for OAuth failures (except user cancellation)
+
+### Next Steps (Clerk Dashboard Configuration)
+1. **Enable Google OAuth in Clerk Dashboard**:
+   - Navigate to User & Authentication → Social Connections
+   - Click "Add connection" → Select "Google"
+   - For development: Use Clerk's preconfigured credentials (click "Add connection")
+   - For production: Configure custom OAuth credentials in Google Cloud Console
+
+2. **Enable Apple OAuth in Clerk Dashboard**:
+   - Navigate to User & Authentication → Social Connections
+   - Click "Add connection" → Select "Apple"
+   - For development: Use Clerk's preconfigured credentials
+   - For production: Configure custom credentials in Apple Developer Portal
+
+### Note
+- The buttons will appear on the sign-in screen but won't work until OAuth providers are configured in the Clerk Dashboard
+- OAuth flows require proper URL scheme configuration for deep linking (already configured in `app.json` with `scheme: "abv3"`)
+
+---
+
+## 2025-12-24 18:59:03 - Player Screen UX Improvements for Emotional Anchoring
+
+**Purpose**: Made play/pause button the emotional anchor and simplified Mix Audio panel to reduce decision-making friction during relaxation.
+
+### Changes Made
+
+1. **Play/Pause Button Enhancements**:
+   - Increased button size from 80px to 96px (20% larger) for better visual prominence
+   - Added breathing glow animation that only appears when playing
+   - Glow fades out completely when paused (no visual noise)
+   - Animation uses 2-second breathing cycle (fade in/out) for calm, organic feel
+   - Icon size increased from 36px to 40px to match larger button
+
+2. **Mix Audio Progressive Reveal**:
+   - Default state now shows visual bars only (no sliders visible)
+   - Removed decision-making friction by hiding sliders initially
+   - Added tap-and-hold on header to expand to full slider controls
+   - Visual bars show current mix levels using simple progress indicators
+   - Sliders only appear when explicitly expanded (reduces cognitive load)
+
+3. **Removed Percentage Text**:
+   - Replaced numeric percentages (72%, 40%, etc.) with emotional labels
+   - New labels: "Low" (< 33%), "Medium" (33-67%), "High" (> 67%)
+   - This aligns with the product philosophy: "Meditation ≠ optimization"
+   - Removes analytical thinking during relaxation
+
+4. **Waveform Animation Improvements**:
+   - Slowed animation speed by 30% (from 3000ms to 3900ms per cycle)
+   - Creates more breathing, less oscillating visual pattern
+   - Aligns with calm aesthetic - animation should feel alive, not mechanical
+
+### Design Philosophy Alignment
+
+These changes directly support the V3 experiential principles:
+- **Calm is the Primary Output**: Removing percentages and slowing animations reduces cognitive load
+- **No Clocks, No Finish Lines**: Visual simplicity reduces performance anxiety
+- **Variation is Micro**: Breathing glow provides subtle, organic variation
+- **Silence is an Active Ingredient**: Pausing removes glow entirely, respecting silence
+
+### Files Modified
+
+- `apps/mobile/src/screens/PlayerScreen.tsx`:
+  - Added `glowOpacity` animated value for breathing effect
+  - Added `mixPanelExpanded` state for progressive reveal
+  - Added `getMixLabel()` helper function for Low/Medium/High labels
+  - Updated play button styling (96px size, animated glow container)
+  - Updated Mix Audio panel to show bars by default, sliders on expansion
+  - Updated waveform speed from 3000ms to 3900ms
+  - Removed percentage displays, replaced with emotional labels
+
+### User Experience Impact
+
+- **Play button** now feels alive and responsive, not just functional
+- **Mix panel** reduces decision fatigue by hiding complexity until needed
+- **Labels** shift focus from optimization to feeling
+- **Waveform** breathes more naturally, less distracting
+
+### Future Enhancements (Not Implemented)
+
+- Waveform amplitude reduction when affirmations are silent (requires voice activity detection)
+  - Would use `voiceActivity.segments` from PlaybackBundleVM to detect silent periods
+  - Could reduce amplitude to 0.2 during silence, return to 0.5 during speech
+
+---
+
+## 2025-12-24 19:15:00 - Player Screen Layout Refinement: Breathing Circle & Simplified Controls
+
+**Purpose**: Replace waveform with natural breathing circle visualization, simplify controls to focus on play button, and reorganize layout to move session info to bottom.
+
+### Changes Made
+
+1. **Replaced Waveform with Breathing Circle**:
+   - Created new `BreathingCircle` component with natural breathing animation
+   - Circle scales from 0.9 to 1.15 during inhale (4 seconds)
+   - Circle scales back to 0.9 during exhale (5 seconds)
+   - Opacity animates from 0.4 to 0.7, creating organic breathing feel
+   - When paused, circle returns to resting state (0.9 scale, 0.4 opacity)
+   - Uses same timing as PrimerAnimation for consistency (4s inhale, 5s exhale)
+   - Circle is 180px diameter with inner circle for depth
+
+2. **Removed Forward/Back Controls**:
+   - Removed skip-previous and skip-next buttons
+   - Play button is now the only control, centering focus
+   - Controls card now centers the play button only
+   - Simplifies interface and reduces decision-making during relaxation
+
+3. **Moved Session Info to Bottom**:
+   - Session title and "Currently playing" subtitle moved below play button
+   - New `sessionInfoContainer` styled as glass card
+   - Info appears below controls and above mix panel
+   - Better visual hierarchy: visualization → controls → info → mix
+
+### Layout Flow (Top to Bottom)
+
+1. **Top Navigation**: Back button, sleep timer, menu
+2. **Main Card**: Breathing circle visualization (centered, large)
+3. **Controls Card**: Single play button (centered)
+4. **Session Info**: Title and frequency display
+5. **Mix Panel**: Audio mix controls (expandable)
+
+### Design Philosophy Alignment
+
+- **Calm is the Primary Output**: Breathing circle creates natural, meditative rhythm
+- **No Clocks, No Finish Lines**: Removed navigation controls reduce time-consciousness
+- **Variation is Micro**: Breathing animation provides subtle, organic variation
+- **Simplicity**: Single play button removes complexity and choice paralysis
+
+### Files Modified
+
+- `apps/mobile/src/screens/PlayerScreen.tsx`:
+  - Removed `Waveform` component import and usage
+  - Added `BreathingCircle` component (inline implementation)
+  - Removed forward/back button controls
+  - Moved session title and subtitle to new container at bottom
+  - Updated layout styles for new hierarchy
+  - Added `Easing` import for animations
+
+### Technical Details
+
+- Breathing animation uses `Animated.loop` with `Animated.sequence`
+- Scale and opacity animations run in parallel for natural breathing effect
+- Animation pauses when playback is paused (returns to resting state)
+- Circle uses theme accent highlight color (#212529 based on theme tokens)
+
+---
+
+## 2025-12-24 20:09:40 - Home Screen Ritual Entry: Softer, More Inviting Design
+
+**Purpose**: Transform Home screen from form-like interface to ritual entry point that feels like stepping into a quiet room, not choosing from a menu.
+
+### Changes Made
+
+1. **Input Container Softening**:
+   - Increased border radius from `lg` (16px) to `2xl` (32px) for much more curved, organic feel
+   - Removed border completely (was 1px solid border)
+   - Added soft shadow instead for subtle depth (replaces harsh border)
+   - Increased padding (from 16px to 24px horizontal, from 16px to 24px vertical)
+   - Increased minHeight from 100px to 120px for more breathing room
+   - Changed background from `surfaceElevated` to `surface` for softer appearance
+   - Increased input font size from 16px to 17px for more inviting feel
+   - Increased line height from 22px to 26px for more relaxed reading
+
+2. **Placeholder Text Update**:
+   - Changed from "Start typing here…" to "What do you need to hear today?"
+   - Makes input feel more like an invitation than a form field
+   - Aligns with ritual entry feeling
+
+3. **Header Simplification**:
+   - Removed "WELCOME BACK." title (too menu-like, too aggressive)
+   - Changed subtitle to "What do you need to hear today?" (matches input placeholder)
+   - Reduced font weight from 800 to 700 for softer appearance
+   - Reduced font size from 32px to 28px
+   - Tighter letter spacing (-0.3 vs -0.5) for calmer feel
+   - More space between elements (spacing[3] vs spacing[2])
+
+4. **Count Selector Softening**:
+   - Increased border radius from `md` (12px) to `xl` (24px)
+   - Removed borders completely
+   - Added soft shadows instead (replaces rectangular borders)
+   - Changed background to `surface` instead of `surfaceElevated`
+   - Softer active state (15% opacity instead of 20%, no border)
+
+5. **Continue Card & Recent Items Softening**:
+   - Increased border radius (continue: lg→xl, recent: md→lg)
+   - Removed all borders
+   - Added soft shadows for depth
+   - Increased padding for more generous spacing
+   - Changed backgrounds to `surface` for consistency
+
+### Design Philosophy Alignment
+
+- **Calm is the Primary Output**: Removed harsh borders, increased curves, soft shadows create calm feeling
+- **Simplicity**: Removed "WELCOME BACK" title reduces menu-like feel
+- **Invitation over Instruction**: Placeholder "What do you need to hear today?" is an invitation, not instruction
+- **Organic over Geometric**: Increased border radius (32px) creates organic, less rectangular feel
+- **Quiet Room**: Soft shadows replace borders, generous padding, larger text creates spacious, quiet feeling
+
+### Files Modified
+
+- `apps/mobile/src/screens/HomeScreen.tsx`:
+  - Updated `inputContainer` styles (border radius, padding, shadow, background)
+  - Updated `input` styles (font size, line height)
+  - Updated placeholder text
+  - Updated header (removed title, updated subtitle)
+  - Updated `countOption` styles (border radius, removed borders, shadows)
+  - Updated `continueCard` styles (border radius, removed borders, shadows)
+  - Updated `recentItem` styles (border radius, removed borders, shadows, padding)
+
+### Visual Transformation
+
+**Before**: Rectangular borders, form-like appearance, menu-like headers, tight spacing
+**After**: Curved edges (32px radius), shadow-based depth, invitation-based copy, generous spacing
+
+The screen now feels like stepping into a quiet, contemplative space rather than filling out a form or choosing from a menu.
+
+---
+
+## 2025-12-24 20:13:26 - Loading Screen: Breathing Orb Continuity & Soft Progress Indicators
+
+**Purpose**: Transform loading screen to use the same breathing orb as the player screen, creating continuity and preventing UI metaphor switches. Add slow breathing animation and soft progress indicators.
+
+### Changes Made
+
+1. **Replaced Icon with Breathing Orb (Player Seed)**:
+   - Removed `graphic-eq` MaterialIcon
+   - Added same breathing circle design as PlayerScreen (180px diameter, 90px inner circle)
+   - Orb is the "player seed" - it begins here and continues into the player
+   - No UI metaphor switch - seamless transition from loading to player
+
+2. **Very Slow Breathing Animation**:
+   - Scale animates from 0.965 to 1.035 (±3.5% scale variation)
+   - 7-second loop (3.5s inhale, 3.5s exhale)
+   - Opacity animates from 0.4 to 0.6 in sync with scale
+   - Creates subtle, meditative breathing rhythm
+   - Uses `Animated.loop` with `Easing.inOut(Easing.ease)` for smooth transitions
+
+3. **Opacity Shimmer During "Generating"**:
+   - Added shimmer overlay that appears only during "generating" step
+   - Shimmer opacity pulses from 0.3 to 0.6 over 2 seconds
+   - "Generating..." text also pulses with opacity animation
+   - Provides subtle visual feedback during active generation
+
+4. **Replaced Heavy Checkmark Icons with Soft Dots**:
+   - Removed checkmark icons from completed steps
+   - Replaced with soft filled dots (12px diameter)
+   - Inactive: 40% opacity, muted border color
+   - Active: 80% opacity, highlight color, subtle glow (shadowRadius: 8)
+   - Completed: 60% opacity, highlight color, softer glow (shadowRadius: 6)
+   - No borders, just filled circles with subtle glows
+
+5. **Simplified Loading Message**:
+   - Removed "We're building the best session for you!" main message
+   - Kept "Just a moment..." / "Generating..." dynamic message
+   - Cleaner, more focused interface
+
+### Design Philosophy Alignment
+
+- **No UI Metaphor Switch**: Orb continues seamlessly from loading to player
+- **Calm is the Primary Output**: Slow breathing (7s loop) creates meditative rhythm
+- **Subtle Variation**: Shimmer provides micro-feedback without distraction
+- **Organic over Geometric**: Soft dots replace checkmarks, glows replace borders
+- **Continuity**: Same orb design ensures visual continuity throughout experience
+
+### Files Modified
+
+- `apps/mobile/src/screens/AudioGenerationLoadingScreen.tsx`:
+  - Added `orbScaleAnim`, `orbOpacityAnim`, `shimmerOpacityAnim` animated values
+  - Replaced icon container with breathing orb component
+  - Added breathing animation (7s loop, ±3.5% scale)
+  - Added shimmer animation during "generating" step
+  - Replaced `radioButton` styles with `progressDot` (soft filled circles)
+  - Removed checkmark icons, removed unused `mainMessage` style
+  - Added `Easing` import for animations
+
+### Technical Details
+
+- Breathing animation: Scale 0.965 → 1.035, Opacity 0.4 → 0.6, 3.5s each direction
+- Shimmer animation: Opacity 0.3 → 0.6, 2s each direction, only during "generating"
+- Progress dots: 12px diameter, no borders, subtle glow shadows
+- Orb dimensions match PlayerScreen exactly (180px outer, 90px inner)
+- All animations use `useNativeDriver: true` for performance
+
+### Visual Continuity
+
+**Loading Screen → Player Screen**:
+- Same orb design (180px circle, 90px inner circle)
+- Same color (theme accent highlight)
+- Same breathing rhythm (continuous experience)
+- Seamless visual transition creates sense of continuity and calm
+
+---
+
+## 2025-12-24 20:20:00 - Bottom Tab Bar: Thinner Design with Conditional Labels
+
+**Purpose**: Make the floating tab bar thinner and show icon + page title for selected page, icons only for non-selected pages.
+
+### Changes Made
+
+1. **Reduced Tab Bar Height**:
+   - Height reduced from 64px to 52px (thinner)
+   - Padding reduced (paddingVertical: 6px, paddingTop/Bottom: 6px)
+   - Border radius slightly reduced (32px to 28px) to match thinner height
+
+2. **Conditional Label Display**:
+   - Selected tab: Shows icon + page title (horizontal layout)
+   - Non-selected tabs: Shows icon only (vertical layout)
+   - Labels are "Today", "Explore", "Library" (updated "My Library" to "Library")
+   - Label appears next to icon with 6px gap when selected
+
+3. **CustomTabBarButton Updates**:
+   - Added `label` prop to pass page title
+   - Conditional `flexDirection`: "row" for focused, "column" for unfocused
+   - Conditional padding: More horizontal padding when focused (12px vs 8px)
+   - Icon size slightly reduced (24px to 22px) to accommodate label
+   - Label styled with white color (#ffffff), 11px font, 600 weight
+
+4. **Tab Bar Configuration**:
+   - Disabled default labels (`tabBarShowLabel: false`)
+   - Labels hidden via `tabBarLabelStyle: { display: "none" }`
+   - Labels rendered manually in CustomTabBarButton for full control
+
+### Files Modified
+
+- `apps/mobile/src/App.tsx`:
+  - Updated `floatingTabBarStyle` (height: 52px, border radius: 28px, padding: 6px)
+  - Updated `CustomTabBarButton` to accept and render label conditionally
+  - Added `Text` import from react-native
+  - Updated tab screen options to pass label prop
+  - Updated icon sizes (24px to 22px)
+  - Changed "My Library" to "Library"
+  - Changed "Home" to "Today" to match screen name
+
+### Design Philosophy Alignment
+
+- **Simplicity**: Thinner tab bar reduces visual weight
+- **Clear Hierarchy**: Selected tab with label stands out, unselected tabs are minimal
+- **Clean Interface**: Icons-only for non-selected tabs reduces clutter
+- **Focused Experience**: Selected tab clearly indicates current page
+
+---
+
+## 2025-01-14 00:30:00 - Development Mode Authentication Bypass
+
+### Summary
+Added ability to skip sign-in during development to speed up development workflow.
+
+### Changes
+
+#### Files Modified
+- `apps/mobile/src/App.tsx`: Added `__DEV__` check to bypass ClerkProvider in development mode
+- `apps/mobile/src/lib/auth.ts`: 
+  - Added `shouldSkipAuth()` function that returns `__DEV__`
+  - Created `ClerkAvailableContext` to track whether Clerk is available
+  - Created `ClerkAvailableProvider` component to wrap app content
+  - Modified `useAuthToken()` to check dev mode first, then context, before calling Clerk hooks
+
+### Implementation Details
+
+**Authentication Bypass Logic:**
+1. In `App.tsx`, check `__DEV__` flag before wrapping with ClerkProvider
+2. If in dev mode (`__DEV__ === true`), always render `AppContentWithoutAuth` 
+3. `AppContentWithoutAuth` wraps content in `ClerkAvailableProvider` with `available={false}`
+4. `useAuthToken()` checks dev mode first and returns `null` early, avoiding Clerk hook calls
+5. If not in dev mode, render `AppContentWithAuth` inside ClerkProvider with `available={true}`
+
+**Why This Approach:**
+- React hooks must be called unconditionally, so we can't conditionally call `useClerkAuth()`
+- Solution: Check `__DEV__` and context flags BEFORE calling hooks, returning `null` early if auth is skipped
+- Context provider pattern ensures components know whether Clerk is available
+- Safe to call `useAuthToken()` from any component - it will return `null` in dev mode
+
+### Behavior
+
+**Development Mode (`__DEV__ === true`):**
+- No sign-in screen shown
+- `useAuthToken()` always returns `null`
+- API calls work with default user (as designed - API handles null tokens)
+- Console log: `"[App] 🔧 Development mode: Authentication bypassed"`
+
+**Production Mode (`__DEV__ === false`):**
+- Clerk authentication required if Clerk key is configured
+- `useAuthToken()` returns Clerk session token when signed in
+- Sign-in screen shown when not authenticated
+
+### Testing Notes
+- Test in dev mode: App should skip sign-in and go straight to main content
+- Test in production build: Authentication should work normally
+- Verify API calls still work with `null` auth token (defaults to shared user)
+
+---
+
+## 2025-12-25 10:53:12 - Bottom Tab Bar Foggy Glass Blur Effect
+
+### Summary
+Added true blur effect to the bottom floating tab bar using `expo-blur`'s `BlurView` component, creating a foggy glass aesthetic that appears consistently on all tab screens.
+
+### Changes Made
+
+**File: `apps/mobile/src/App.tsx`**
+
+1. **Installed expo-blur**: Added `expo-blur@~15.0.8` package using `npx expo install expo-blur` to ensure SDK compatibility.
+
+2. **Created CustomTabBar Component**:
+   - Wrapped React Navigation's `BottomTabBar` component with `BlurView` from `expo-blur`
+   - Outer `View` container handles absolute positioning (bottom: 20, left: 20, right: 20) and shadow/elevation
+   - Inner `BlurView` provides the foggy glass blur effect with:
+     - `intensity={80}` for strong blur effect
+     - `tint="light"` for light glass appearance
+     - Padding and flex layout to match previous design
+   - Border and shadow styling moved to outer container for proper layering
+
+3. **Updated Tab Navigator**:
+   - Added `tabBar={(props) => <CustomTabBar {...props} />}` to `Tab.Navigator` to use custom tab bar
+   - Updated `floatingTabBarStyle` to remove absolute positioning and padding (handled by custom container)
+   - Set `backgroundColor: "transparent"` in tab bar style since BlurView handles the background
+
+4. **Imports Added**:
+   - `BlurView` from `expo-blur`
+   - `BottomTabBar` from `@react-navigation/bottom-tabs`
+   - `BottomTabBarProps` type for TypeScript typing
+   - `Platform` and `StyleSheet` from `react-native` (for potential platform-specific adjustments)
+
+### Design Details
+
+**Blur Effect Specifications:**
+- **Intensity**: 80 (strong blur for foggy glass effect)
+- **Tint**: Light (creates white/light glass appearance)
+- **Container**: Outer View with rounded corners (28px), subtle border (rgba(0,0,0,0.1)), and soft shadow
+- **Positioning**: Absolutely positioned at bottom: 20, left: 20, right: 20
+- **Height**: 52px (maintained thin profile)
+
+**Visual Result:**
+- Semi-transparent white background with blur effect
+- Content behind the tab bar is visible but blurred
+- Maintains all existing functionality (conditional labels, black active state, left-aligned icons)
+- Appears consistently on all tab screens (Today, Explore, Library)
+
+### Technical Notes
+
+**Why CustomTabBar Approach:**
+- React Navigation's `tabBarStyle` doesn't support blur effects directly
+- `BlurView` needs to be a parent container to blur content behind it
+- Custom `tabBar` prop allows wrapping the default `BottomTabBar` with blur while maintaining all navigation functionality
+
+**Style Hierarchy:**
+1. Outer `View` container: Positioning, shadows, borders, overflow handling
+2. `BlurView`: Blur effect and padding
+3. `BottomTabBar`: Tab button layout and navigation logic
+4. `floatingTabBarStyle`: Minimal styling (transparent background, flex layout) applied to BottomTabBar
+
+**Platform Compatibility:**
+- `expo-blur` provides native blur on both iOS and Android
+- `BlurView` automatically adapts to platform capabilities
+- Falls back gracefully if blur isn't supported (though unlikely with Expo SDK 54)
+
+### User Experience Impact
+
+**Benefits:**
+- More sophisticated, modern aesthetic with depth perception
+- Content behind tab bar is visible but doesn't distract (blurred)
+- Maintains all existing tab bar functionality
+- Consistent appearance across all tab screens
+
+**Maintained Features:**
+- Conditional label display (only on active tab)
+- Black background for active tab with white text/icon
+- Left-aligned icons with expanding label
+- 26px icon size
+- 52px thin profile
+
+---
+
+## 2025-12-25 10:55:00 - Slower, More Meditative Voice Speed
+
+### Summary
+Reduced TTS voice speed across all providers (OpenAI, ElevenLabs, Azure) to create a slower, more meditative delivery that aligns with the calming, ritualistic experience of the app.
+
+### Changes Made
+
+**File: `apps/api/src/services/audio/tts.ts`**
+
+1. **OpenAI TTS Speed Reduction**:
+   - Changed speed from `0.9` to `0.75` for "slow" pace
+   - This reduces speech rate to 75% of normal speed for a more meditative, deliberate delivery
+   - Variant 2 maintains slight variation (0.75 * 1.02 = 0.765)
+
+2. **ElevenLabs Stability Reduction**:
+   - Reduced stability from `0.35/0.3` to `0.25/0.2` (variant 1/variant 2)
+   - Reduced similarity_boost from `0.6/0.55` to `0.5/0.45`
+   - Lower stability = slower, more deliberate delivery according to ElevenLabs documentation
+   - Applied to both main function and fallback function
+
+3. **Azure TTS Prosody Rate Reduction**:
+   - Changed prosody rate from `1.0/1.02` to `0.75/0.77` (normal/variant 2)
+   - This reduces speech rate to 75% of normal speed
+   - Maintains slight variation between variants for natural prosody
+
+### Technical Details
+
+**Speed/Rate Values:**
+- **OpenAI**: `0.75` (75% speed) - down from 0.9 (90% speed)
+- **ElevenLabs**: Stability `0.25/0.2` (down from 0.35/0.3) - lower = slower, more deliberate
+- **Azure**: Prosody rate `0.75/0.77` (down from 1.0/1.02) - 75% speed
+
+**Impact on User Experience:**
+- Voices will speak approximately 17-25% slower than before
+- More time for each affirmation to "land" and be absorbed
+- Creates a more meditative, contemplative atmosphere
+- Aligns with the "slow, deliberate, grounding" pace specified in Loop-and-delivery.md
+
+**Note on Caching:**
+- Existing audio chunks are cached with the old pace in their hash
+- New sessions will generate audio with the slower pace
+- Old cached chunks will need to be regenerated to get the new slower speed
+- The hash includes pace: `${voiceId}:${pace}:${text}:${variant}:${AUDIO_PROFILE_V3.VERSION}`
+
+### Rationale
+
+**Why These Values:**
+- `0.75` speed provides a noticeable but natural slowdown (not robotic)
+- ElevenLabs stability reduction creates more deliberate, thoughtful delivery
+- Maintains slight variation between variants (1 vs 2) for natural prosody
+- All providers now consistently deliver slower, more meditative speech
+
+**Alignment with Product Vision:**
+- Matches "slow, deliberate, grounding" pace requirement from Loop-and-delivery.md
+- Supports the ritualistic, contemplative experience
+- Gives users more time to process and internalize affirmations
+- Creates a calming, non-rushed atmosphere
+
+## 2025-12-25 13:33:17 - Explored bna-ui Components for UI Enhancement
+
+### What Changed
+- Installed bna-ui CLI tool and added button and card components
+- Created `ComponentComparisonScreen.tsx` to compare existing components with bna-ui
+- Added comparison screen to navigation stack for easy access
+
+### Components Installed
+- bna-ui Button component (with animations, haptics, multiple variants)
+- bna-ui Card component (with CardHeader, CardTitle, CardContent structure)
+- Supporting components: Text, View, Icon, Spinner
+- Hooks: useColor (for theme system)
+- Theme: globals.ts (constants)
+
+### Files Added
+- `apps/mobile/components/ui/button.tsx` - bna-ui Button component
+- `apps/mobile/components/ui/card.tsx` - bna-ui Card component  
+- `apps/mobile/components/ui/text.tsx` - bna-ui Text component
+- `apps/mobile/components/ui/view.tsx` - bna-ui View component
+- `apps/mobile/components/ui/icon.tsx` - bna-ui Icon component
+- `apps/mobile/components/ui/spinner.tsx` - bna-ui Spinner component
+- `apps/mobile/hooks/useColor.ts` - Color hook for theming
+- `apps/mobile/theme/globals.ts` - Global theme constants
+- `apps/mobile/src/screens/ComponentComparisonScreen.tsx` - Comparison screen
+
+### Current Status
+bna-ui components are installed but require additional setup:
+- Need to configure path aliases (`@/`) in tsconfig
+- Need to create `useColorScheme` hook
+- Need to create `theme/colors.ts` for theme system
+- Components use different structure (CardHeader/CardTitle vs direct children)
+
+### Access
+Navigate to "ComponentComparison" screen to see side-by-side comparison. Can be accessed programmatically:
+```typescript
+navigation.navigate('ComponentComparison');
+```
+
+### Rationale
+**Why bna-ui:**
+- Modern animations with react-native-reanimated
+- Built-in haptic feedback support
+- Multiple size variants (sm, md, lg, icon)
+- Professional polish with spring animations
+
+**Considerations:**
+- Your existing components are already well-integrated with your theme system
+- bna-ui requires setup of their theme system or adaptation to your tokens
+- Consider adopting bna-ui animation patterns rather than replacing components entirely
+- Your PrimaryButton with LinearGradient may be more suited to your design aesthetic
+
+**Recommendation:**
+Consider extracting bna-ui's animation and haptic patterns to enhance your existing components rather than replacing them, as your components already match your design system better.
+
+## 2025-12-25 13:37:47 - Enhanced Components with bna-ui Animation Patterns
+
+### What Changed
+- ✅ Extracted animation and haptic patterns from bna-ui components
+- ✅ Enhanced PrimaryButton with spring animations and haptic feedback
+- ✅ Enhanced Card component with subtle press animations
+- ✅ Moved react-native-reanimated and expo-haptics to dependencies
+- ✅ Updated ComponentComparisonScreen to showcase enhancements
+
+### Enhanced Components
+
+#### PrimaryButton Enhancements
+- **Spring Animations**: Uses `useSharedValue` and `withSpring` from react-native-reanimated
+- **Haptic Feedback**: Light haptic feedback on press (iOS & Android)
+- **Smooth Scale**: Scales to 1.02 on press, smooth spring return
+- **Opacity Animation**: Subtle opacity change (0.95) for visual feedback
+- **Optional**: Can be disabled with `animated={false}` and `haptic={false}` props
+- **Spring Physics**: 
+  - Press: damping: 15, stiffness: 400, mass: 0.5
+  - Release: damping: 20, stiffness: 400, mass: 0.8
+
+#### Card Enhancements
+- **Subtle Press Animation**: Scales to 0.98 on press for tactile feedback
+- **Haptic Feedback**: Light haptic on pressable cards
+- **Gentle Animation**: Non-intrusive, maintains meditative feel
+- **Spring Physics**: 
+  - damping: 20, stiffness: 300, mass: 0.5 (press)
+  - damping: 20, stiffness: 300, mass: 0.8 (release)
+
+### Files Modified
+- `apps/mobile/src/components/PrimaryButton.tsx` - Added animations and haptics
+- `apps/mobile/src/components/Card.tsx` - Added subtle press animations
+- `apps/mobile/package.json` - Moved reanimated and haptics to dependencies
+- `apps/mobile/src/screens/ComponentComparisonScreen.tsx` - Updated to show enhancements
+
+### Technical Details
+- Uses `react-native-reanimated` v4.2.1 for performant animations
+- Uses `expo-haptics` for cross-platform haptic feedback
+- All animations run on UI thread via `useNativeDriver: true` (implicit in reanimated)
+- Maintains backward compatibility - animations are optional
+- All existing props and functionality preserved
+
+### Animation Pattern (Extracted from bna-ui)
+```typescript
+// Animation values
+const scale = useSharedValue(1);
+const opacity = useSharedValue(1);
+
+// Press handler
+const handlePressIn = () => {
+  'worklet';
+  scale.value = withSpring(1.02, {
+    damping: 15,
+    stiffness: 400,
+    mass: 0.5,
+  });
+};
+
+// Animated style
+const animatedStyle = useAnimatedStyle(() => ({
+  transform: [{ scale: scale.value }],
+  opacity: opacity.value,
+}));
+```
+
+### Rationale
+**Why Extract Patterns Instead of Replacing:**
+- Your components already perfectly match your theme system
+- LinearGradient variant is unique to your design
+- Maintaining your design tokens is cleaner than adapting bna-ui's theme
+- Can selectively adopt what works (animations) without full migration
+
+**Benefits:**
+- Smooth, professional animations enhance UX
+- Haptic feedback provides tactile confirmation
+- All animations are optional and can be disabled
+- Performance: animations run on UI thread
+- Backward compatible: existing code works unchanged
+
+### Next Steps
+- Test animations on physical devices (iOS & Android)
+- Consider adding animations to other interactive components
+- Monitor performance impact (should be minimal due to native driver)
+- User feedback on animation feel and haptic strength
+
+## 2025-12-25 13:54:34 - Implemented Full bna-ui Components
+
+### What Changed
+- ✅ Installed Carousel component with swipe gestures and indicators
+- ✅ Installed Onboarding component for multi-step flows
+- ✅ Installed ParallaxScrollView for hero sections with parallax effects
+- ✅ Installed Sheet component for bottom drawer/modal sheets
+- ✅ Installed Skeleton component for loading states
+- ✅ Set up path aliases (@/) for bna-ui component imports
+- ✅ Created required hooks and theme files for bna-ui compatibility
+- ✅ Created demo screens showcasing all components
+
+### Components Installed
+
+#### Carousel ([Documentation](https://ui.ahmedbna.com/docs/components/carousel))
+- Swipeable carousel with auto-play support
+- Dot indicators showing current position
+- Navigation arrows with blur effects
+- Custom item widths and spacing
+- Loop mode for infinite scrolling
+- Smooth animations with react-native-gesture-handler
+
+#### Onboarding ([Documentation](https://ui.ahmedbna.com/docs/components/onboarding))
+- Multi-step onboarding flow
+- Smooth page transitions with react-native-reanimated
+- Swipe gestures to navigate between steps
+- Progress indicators
+- Customizable content (images, icons, text)
+- Skip and completion callbacks
+
+#### ParallaxScrollView ([Documentation](https://ui.ahmedbna.com/docs/components/parallax-scrollview))
+- Hero sections with parallax scrolling effects
+- Header scales and translates as you scroll
+- Smooth, hardware-accelerated animations
+- Customizable header height
+- Perfect for profile screens, article headers, product pages
+
+#### Sheet ([Documentation](https://ui.ahmedbna.com/docs/components/sheet))
+- Bottom drawer/modal sheet component
+- Smooth slide-up animations
+- Swipe-down to dismiss
+- Backdrop overlay with blur
+- Customizable content (header, title, description, footer)
+- Works on iOS and Android
+
+#### Skeleton ([Documentation](https://ui.ahmedbna.com/docs/components/skeleton))
+- Loading state placeholders
+- Animated shimmer effect
+- Customizable width, height, and border radius
+- Rounded and default variants
+- Perfect for showing content loading states
+
+### Files Created/Modified
+
+**New Component Files:**
+- `apps/mobile/components/ui/carousel.tsx`
+- `apps/mobile/components/ui/onboarding.tsx`
+- `apps/mobile/components/ui/parallax-scrollview.tsx`
+- `apps/mobile/components/ui/sheet.tsx`
+- `apps/mobile/components/ui/skeleton.tsx`
+
+**New Hooks:**
+- `apps/mobile/hooks/useColorScheme.ts` - Color scheme detection for bna-ui
+- `apps/mobile/hooks/useBottomTabOverflow.ts` - Bottom inset for parallax
+
+**New Theme Files:**
+- `apps/mobile/theme/colors.ts` - Color mappings for bna-ui components
+
+**New Demo Screens:**
+- `apps/mobile/src/screens/BNAUIComponentsScreen.tsx` - Main showcase screen
+- `apps/mobile/src/screens/ParallaxExampleScreen.tsx` - ParallaxScrollView demo
+- `apps/mobile/src/screens/OnboardingExampleScreen.tsx` - Onboarding demo
+
+**Wrappers:**
+- `apps/mobile/src/components/bna-ui/index.ts` - Centralized exports
+
+**Configuration:**
+- `apps/mobile/tsconfig.json` - Added path aliases (@/ maps to apps/mobile/)
+- `apps/mobile/metro.config.js` - Added alias resolver for Metro bundler
+- `apps/mobile/index.js` - Added gesture-handler initialization
+
+### Dependencies Added
+- `react-native-gesture-handler` - Required for Carousel and Onboarding swipe gestures
+
+### Path Alias Setup
+
+Configured `@/` to map to `apps/mobile/` for bna-ui component imports:
+- `@/components/ui/*` → `apps/mobile/components/ui/*`
+- `@/hooks/*` → `apps/mobile/hooks/*`
+- `@/theme/*` → `apps/mobile/theme/*`
+
+### Usage Examples
+
+**Carousel:**
+```typescript
+import { Carousel, CarouselItem } from "../components/bna-ui";
+
+<Carousel showIndicators showArrows autoPlay>
+  <CarouselItem><Text>Slide 1</Text></CarouselItem>
+  <CarouselItem><Text>Slide 2</Text></CarouselItem>
+</Carousel>
+```
+
+**Onboarding:**
+```typescript
+import { Onboarding, type OnboardingStep } from "../components/bna-ui";
+
+const steps: OnboardingStep[] = [
+  { id: "1", title: "Welcome", description: "..." },
+];
+<Onboarding steps={steps} onComplete={() => {}} />
+```
+
+**Sheet:**
+```typescript
+import { Sheet, SheetContent } from "../components/bna-ui";
+
+<Sheet open={open} onOpenChange={setOpen}>
+  <SheetContent>Content here</SheetContent>
+</Sheet>
+```
+
+**Skeleton:**
+```typescript
+import { Skeleton } from "../components/bna-ui";
+
+<Skeleton width="100%" height={20} />
+```
+
+### Access
+Navigate to "BNAUIComponents" screen to see all components in action:
+```typescript
+navigation.navigate('BNAUIComponents');
+```
+
+Or from ComponentComparisonScreen, tap "View bna-ui Components Demo" button.
+
+### Rationale
+**Why Full Implementation:**
+- These components provide powerful, production-ready UI patterns
+- Each component solves specific UX problems:
+  - Carousel: Featured content, image galleries
+  - Onboarding: First-time user experience
+  - ParallaxScrollView: Hero sections, profile headers
+  - Sheet: Modal actions, forms, details
+  - Skeleton: Loading states, content placeholders
+
+**Integration Approach:**
+- Used bna-ui's existing components directly (not just patterns)
+- Set up proper path aliases for clean imports
+- Created theme mappings to match existing design system
+- All components work with existing theme colors and tokens
+- Gesture handler properly initialized at app root
+
+**Benefits:**
+- Professional UI components ready to use
+- Smooth animations and interactions
+- Accessible by default
+- TypeScript support
+- Fully customizable
+- Production-ready code quality
+
+### Next Steps
+- Test all components on physical devices (iOS & Android)
+- Customize components to match app's exact design requirements
+- Consider using Carousel for featured sessions on HomeScreen
+- Consider using ParallaxScrollView for session detail screens
+- Use Sheet for player menu or settings panels
+- Use Skeleton for loading states throughout the app
+
+---
+
+## 2025-01-XX - Improved Network Error Handling in HomeScreen
+
+**Time:** Current session
+
+**Changes Made:**
+- Enhanced error handling in `handleQuickGenerate` function in `HomeScreen.tsx`
+- Improved error messages for network failures to provide actionable guidance
+- Made `getUserStruggle` error logging conditional on `__DEV__` to reduce production noise
+- Added specific error detection for common network issues (connection failures, unauthorized, rate limiting)
+
+**Why:**
+- Users were seeing generic "Network request failed" errors without helpful context
+- The errors were being logged at ERROR level even for expected failures (like optional user struggle fetch)
+- Better error messages help users understand what went wrong and how to fix it
+
+**Technical Details:**
+- Network errors now provide specific guidance about checking API server status and connectivity
+- Error messages distinguish between different failure types (network, auth, rate limit)
+- `getUserStruggle` failures are now silently handled (as intended) with optional dev logging
+- Error handling maintains existing behavior while providing better user experience
+
+**Files Modified:**
+- `apps/mobile/src/screens/HomeScreen.tsx` - Enhanced error handling in `handleQuickGenerate` function
+
+---
+
+## 2025-01-XX - Added API Connection Status Indicator
+
+**Time:** Current session
+
+**Changes Made:**
+- Created `ApiConnectionStatus` component to show real-time API connection status
+- Added component to HomeScreen (dev mode only) for easy diagnosis
+- Component shows connection status (connected/disconnected/checking) with color coding
+- Displays current API URL being used
+- Auto-refreshes every 5 seconds and allows manual refresh on tap
+- Created comprehensive API connection guide in `MD_DOCS/API_CONNECTION_GUIDE.md`
+
+**Why:**
+- Users were experiencing network errors without knowing if the API server was running
+- No easy way to diagnose connection issues from within the app
+- Helps developers quickly identify if API server needs to be started
+
+**Technical Details:**
+- Component checks `/health` endpoint to verify API connectivity
+- Shows helpful error messages when connection fails
+- Only visible in `__DEV__` mode to avoid cluttering production UI
+- Uses theme colors for consistent styling
+- Tap to refresh functionality for manual connection checks
+
+**Files Created:**
+- `apps/mobile/src/components/ApiConnectionStatus.tsx` - New connection status component
+- `MD_DOCS/API_CONNECTION_GUIDE.md` - Comprehensive troubleshooting guide
+
+**Files Modified:**
+- `apps/mobile/src/components/index.ts` - Exported ApiConnectionStatus component
+- `apps/mobile/src/screens/HomeScreen.tsx` - Added ApiConnectionStatus component to header area
+
+---
+
+## 2025-01-14 - Fixed Prisma solfeggioHz Field Error
+
+**Time:** Current session
+
+**Issue:** 
+Prisma was throwing an error: "Unknown argument `solfeggioHz`" when creating sessions, even though the field exists in the schema and migrations have been applied.
+
+**Root Cause:**
+The Prisma client was out of sync with the schema. The `solfeggioHz` field was added to the schema and migration was applied, but the Prisma client hadn't been regenerated. The dev server was running and holding a file lock, preventing client regeneration.
+
+**Solution:**
+Modified `apps/api/src/index.ts` to conditionally include `solfeggioHz` only when it's a valid number (not null or undefined). This prevents Prisma from trying to set the field when it's not provided, avoiding the runtime error.
+
+**Code Change:**
+```typescript
+// Before:
+solfeggioHz: parsedBody.data.solfeggioHz ?? null,
+
+// After:
+...(typeof parsedBody.data.solfeggioHz === 'number' ? { solfeggioHz: parsedBody.data.solfeggioHz } : {}),
+```
+
+**Note:** The proper long-term fix is to stop the dev server, run `pnpm prisma generate` in the `apps/api` directory, and restart the server. This will ensure the Prisma client is fully in sync with the schema.
+
+**Permanent Fix Applied:**
+1. Stopped all running dev servers (bun and node processes)
+2. Successfully regenerated Prisma client with `pnpm prisma generate`
+3. Reverted the temporary conditional fix back to direct field assignment: `solfeggioHz: parsedBody.data.solfeggioHz ?? null`
+
+The Prisma client is now fully in sync with the schema, and the `solfeggioHz` field will work correctly.
+
+**Files Modified:**
+- `apps/api/src/index.ts` - Reverted to proper direct solfeggioHz field assignment after Prisma client regeneration
+
+---
+
+## 2025-12-25 21:13:16 - Bottom Tab Menu Layout Update
+
+**Change:** Cleaned up the bottom tab menu to center the tabs instead of left-aligning them, and ensured proper spacing for page titles.
+
+**Reason:** User requested a centered layout for better visual balance and to ensure page titles have adequate space when displayed.
+
+**Changes Made:**
+1. Changed `justifyContent` from `"flex-start"` to `"center"` in both the `BlurView` container and `floatingTabBarStyle` to center all tabs
+2. Updated `CustomTabBarButton` to use `flex: 1` for all buttons (instead of conditional flex based on focus state) to ensure equal spacing and proper centering
+3. Removed left-alignment styles (`paddingLeft: 12` and conditional `marginRight`) that were causing left-justified layout
+4. Changed button's internal `justifyContent` to `"center"` to center the icon and label content within each button
+
+**Files Modified:**
+- `apps/mobile/src/App.tsx` - Updated CustomTabBarButton, CustomTabBar, and floatingTabBarStyle for centered layout
+
+---
+
+## 2025-12-25 21:15:55 - Bottom Tab Menu Spacing Improvements
+
+**Change:** Significantly increased spacing throughout the bottom tab menu to reduce crowding and improve readability.
+
+**Reason:** User feedback indicated the tabs were too crowded and needed more breathing room, especially for page titles when displayed.
+
+**Changes Made:**
+1. Changed button flex from `flex: 1` to `flex: 0` to allow natural sizing (inactive buttons stay compact, active button expands for label)
+2. Increased button horizontal margins from `2px` to `6px` (3x more space between buttons)
+3. Increased button padding:
+   - Vertical padding: `6px` → `8px`
+   - Horizontal padding when focused: `12px` → `16px`
+   - Horizontal padding when inactive: `8px` → `12px`
+4. Increased container padding:
+   - Horizontal padding: `8px` → `12px`
+   - Vertical padding: `6px` → `8px`
+5. Increased spacing between icon and label from `8px` to `10px` (via marginLeft on Text)
+6. Increased label font size from `11px` to `12px` for better readability
+7. Added `letterSpacing: 0.2` to label text for improved legibility
+
+**Files Modified:**
+- `apps/mobile/src/App.tsx` - Enhanced spacing in CustomTabBarButton and CustomTabBar components
+
+---
+
+## 2025-12-25 21:32:59 - Complete Bottom Tab Bar Replacement with Fixed Icon Slots
+
+**Change:** Completely replaced the custom tab bar implementation with a new `FloatingTabBar` component that uses fixed icon slots and always-visible labels for better visual consistency and readability.
+
+**Reason:** 
+- Icons appeared off-center because glyphs have different visual weights and the previous implementation was centering the glyph itself rather than a fixed icon slot
+- Labels were not showing consistently (only on focused tabs in some cases)
+- User requested classic tab bar layout: fixed icon slot + label underneath (always visible, impossible to misread)
+
+**Key Improvements:**
+1. **Fixed Icon Slots**: All tabs use a consistent 40×40px icon slot, ensuring icons are perfectly centered regardless of glyph visual weight
+2. **Always-Visible Labels**: Labels are now displayed under every icon at all times, not just when focused
+3. **Cleaner Architecture**: Removed complex CustomTabBarButton and CustomTabBar components, replaced with a single, focused FloatingTabBar component
+4. **Better Spacing**: Increased tab bar height to 78px to accommodate labels properly
+5. **Simplified Configuration**: Tab.Screen options now use simple `title` prop instead of custom tabBarButton components
+
+**Implementation Details:**
+- Created new `FloatingTabBar.tsx` component with:
+  - Fixed 40×40px icon slots for consistent centering
+  - Labels always visible underneath icons
+  - Active state: black circular background with white icon, bold label
+  - Inactive state: transparent background with dark icon, lighter label
+  - Proper safe area insets handling
+  - BlurView background for glass effect (matches existing design)
+- Updated Tab Navigator to use simple title-based configuration
+- Removed all old custom tab bar code (CustomTabBarButton, CustomTabBar, floatingTabBarStyle)
+
+**Files Created:**
+- `apps/mobile/src/components/FloatingTabBar.tsx` - New tab bar component (170 lines)
+
+**Files Modified:**
+- `apps/mobile/src/App.tsx` - Replaced custom tab bar with FloatingTabBar, simplified Tab.Screen options
+- `apps/mobile/src/components/index.ts` - Added FloatingTabBar export

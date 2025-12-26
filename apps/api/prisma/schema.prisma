@@ -19,6 +19,9 @@ model User {
   entitlementState EntitlementState?
   entitlementEvents EntitlementEvent[]
   values         UserValue[]
+  sessionEvents SessionEvent[]
+  curationPreferences CurationPreferences?
+  userPaths UserPath[]
 }
 
 model Preferences {
@@ -260,4 +263,54 @@ model AISourcePromptTemplate {
   versions AISourceVersion[]
 
   @@index([name])
+}
+
+// Session event tracking for curation
+model SessionEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  sessionId String
+  eventType String   // "start" | "complete" | "abandon" | "replay" | "skip_affirmation" | "mix_adjust"
+  metadata  String?  // JSON string with event-specific data (abandonTimeSec, mixAdjustments, etc.)
+  occurredAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt])
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([userId, eventType, occurredAt])
+}
+
+// User curation preferences (progressive profiling)
+model CurationPreferences {
+  userId       String @id
+  primaryGoal  String? // "Calm" | "Focus" | "Sleep" | "Confidence" | "Reset"
+  voicePreference String? // "More space" | "Balanced" | "More guidance"
+  soundPreference String? // "Voice-forward" | "Balanced" | "Atmosphere-forward"
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Path/chapter progression system
+model UserPath {
+  id        String   @id @default(uuid())
+  userId    String
+  pathId    String   // e.g., "imposter_to_impact"
+  pathName  String   // e.g., "Imposter to Impact"
+  stepIndex Int      @default(0) // Current chapter (0-based)
+  totalSteps Int     // Total chapters in path
+  lastCompletedAt DateTime?
+  lastActionDone Boolean @default(false)
+  selfRating Int?    // Optional 1-5 rating
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pathId])
+  @@index([userId, isActive])
 }

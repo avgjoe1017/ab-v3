@@ -7,7 +7,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, TextInput, Alert, Pressable } from "react-native";
 import { useAuthToken } from "../../lib/auth";
 import { getUserStruggle } from "../../lib/values";
-import { apiPost } from "../../lib/api";
+import { apiGet, apiPost } from "../../lib/api";
 import type { SessionV3 } from "@ab/contracts";
 import { PrimaryButton, Chip } from "../../components";
 import { theme } from "../../theme";
@@ -185,6 +185,18 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
     if (guidedAffirmations.length === 0 || !guidedAudioSettings) return;
 
     try {
+      // Fetch user's existing sessions to get used titles
+      let usedTitles: string[] = [];
+      try {
+        const sessionsResponse = await apiGet<{ sessions: Array<{ title: string }> }>("/sessions", authToken);
+        usedTitles = sessionsResponse.sessions
+          .filter(s => s.title) // Only include sessions with titles
+          .map(s => s.title);
+      } catch (err) {
+        console.log("[GuidedFlow] Could not fetch user sessions for title deduplication:", err);
+        // Continue without used titles - better to have a duplicate than fail
+      }
+      
       const payload = packToSessionPayload({
         goal: guidedGoal,
         context: guidedContext || undefined,
@@ -192,7 +204,7 @@ export function GuidedFlow({ navigation }: GuidedFlowProps) {
         style: guidedStyle,
         length: guidedLength,
         audioSettings: guidedAudioSettings,
-      });
+      }, usedTitles);
 
       const res = await apiPost<SessionV3>("/sessions", payload, authToken);
       navigation.navigate("Player", { sessionId: res.id });

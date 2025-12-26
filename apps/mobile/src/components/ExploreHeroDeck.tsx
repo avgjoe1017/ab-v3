@@ -96,14 +96,15 @@ export function ExploreHeroDeck({
           const absDx = Math.abs(dx);
           const absVx = Math.abs(vx);
 
-          // Determine if we should commit to a swipe
+          // Determine if we should commit to a swipe (any direction)
           const shouldCommit = absDx > SWIPE_THRESHOLD || absVx > VELOCITY_THRESHOLD;
 
           if (shouldCommit && N > 1) {
-            // Always move forward sequentially, regardless of swipe direction
-            // Animate current card off to the left
+            // Always advance to next card, regardless of swipe direction (left or right)
+            // Animate current card off based on swipe direction, but always advance forward
+            const exitDirection = dx > 0 ? SCREEN_WIDTH * 1.2 : -SCREEN_WIDTH * 1.2;
             Animated.timing(translateX, {
-              toValue: -SCREEN_WIDTH * 1.2,
+              toValue: exitDirection,
               duration: 200,
               useNativeDriver: true,
             }).start(() => {

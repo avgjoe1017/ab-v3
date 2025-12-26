@@ -5,28 +5,17 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
-import ffmpegStatic from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 import fs from "fs-extra";
 import path from "path";
 
 const execFileAsync = promisify(execFile);
 
-// Get ffprobe path (usually next to ffmpeg)
+// Get ffprobe path from ffprobe-static package
 function getFfprobePath(): string {
-  if (!ffmpegStatic) {
-    throw new Error("ffmpeg-static not found");
-  }
-  // ffprobe is usually in the same directory as ffmpeg
-  const ffmpegDir = path.dirname(ffmpegStatic);
-  // Try Windows .exe first
-  const ffprobePathWin = path.join(ffmpegDir, "ffprobe.exe");
-  if (fs.existsSync(ffprobePathWin)) {
-    return ffprobePathWin;
-  }
-  // Try without .exe for Unix
-  const ffprobePathUnix = path.join(ffmpegDir, "ffprobe");
-  if (fs.existsSync(ffprobePathUnix)) {
-    return ffprobePathUnix;
+  // ffprobe-static provides the path directly
+  if (ffprobeStatic?.path) {
+    return ffprobeStatic.path;
   }
   // Fallback: try ffprobe in PATH
   return "ffprobe";

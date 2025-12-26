@@ -27,4 +27,10 @@ export type { DuotonePalette } from "./DuotoneCard";
 export { ExploreHeroDeck } from "./ExploreHeroDeck";
 export type { HeroSession } from "./ExploreHeroDeck";
 export { HeroDeckCard } from "./HeroDeckCard";
+export { ApiConnectionStatus } from "./ApiConnectionStatus";
+export { ForYouSection } from "./ForYouSection";
+export type { CurationCard } from "./ForYouSection";
+export { TuneForYou } from "./TuneForYou";
+export { LivingOrb } from "./LivingOrb";
+export { default as FloatingTabBar } from "./FloatingTabBar";
 

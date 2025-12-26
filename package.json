@@ -11,5 +11,10 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "format": "pnpm -r format"
+  },
+  "pnpm": {
+    "overrides": {
+      "react-native-worklets": "0.5.1"
+    }
   }
 }

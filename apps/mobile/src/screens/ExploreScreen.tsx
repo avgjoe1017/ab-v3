@@ -100,18 +100,6 @@ export default function ExploreScreen({ navigation }: any) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View style={styles.headerText}>
-              <Text style={styles.headerGreeting}>Hello, there</Text>
-              <Text style={styles.headerSubtitle}>Welcome to Entrain</Text>
-            </View>
-            <Pressable style={styles.profileButton}>
-              <LinearGradient
-                colors={["#6c757d", "#495057"]}
-                style={styles.profileImage}
-              />
-            </Pressable>
-          </View>
           {/* Search Bar */}
           <View style={styles.searchContainer}>
             <MaterialIcons name="search" size={20} color="#6c757d" style={styles.searchIcon} />
@@ -396,37 +384,6 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing[12],
     paddingBottom: theme.spacing[4],
     backgroundColor: "transparent",
-  },
-  headerTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: theme.spacing[4],
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerGreeting: {
-    fontFamily: theme.typography.fontFamily.bold,
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#212529",
-    marginBottom: 2,
-  },
-  headerSubtitle: {
-    fontFamily: theme.typography.fontFamily.regular,
-    fontSize: 14,
-    color: "#6c757d",
-  },
-  profileButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    overflow: "hidden",
-  },
-  profileImage: {
-    width: "100%",
-    height: "100%",
   },
   searchContainer: {
     flexDirection: "row",

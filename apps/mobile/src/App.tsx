@@ -6,9 +6,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { ClerkProvider } from "@clerk/clerk-expo";
-import { MaterialIcons } from "@expo/vector-icons";
-import { View, Pressable } from "react-native";
-import type { BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
 import { useFonts } from "expo-font";
 import {
   Inter_400Regular,
@@ -28,82 +25,33 @@ import LibraryScreen from "./screens/LibraryScreen";
 import SessionDetailScreen from "./screens/SessionDetailScreen";
 import OnboardingFlow from "./screens/OnboardingFlow";
 import SettingsScreen from "./screens/SettingsScreen";
+import ComponentComparisonScreen from "./screens/ComponentComparisonScreen";
+import BNAUIComponentsScreen from "./screens/BNAUIComponentsScreen";
+import ParallaxExampleScreen from "./screens/ParallaxExampleScreen";
+import OnboardingExampleScreen from "./screens/OnboardingExampleScreen";
 import { useProgramTracking } from "./hooks/useProgramTracking";
 import { useRecentTracking } from "./hooks/useRecentTracking";
 import { isOnboardingComplete } from "./storage/onboarding";
-import { getClerkPublishableKey, useAuthToken } from "./lib/auth";
+import { getClerkPublishableKey, useAuthToken, ClerkAvailableProvider, shouldSkipAuth } from "./lib/auth";
 import { initializeRevenueCat } from "./lib/revenuecat";
 import { theme } from "./theme";
 import { setAuthToken } from "./lib/api";
+import SignInScreen from "./screens/SignInScreen";
+import { useAuth } from "@clerk/clerk-expo";
+import { FloatingTabBar } from "./components";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 const queryClient = new QueryClient();
 
-// Custom tab bar button with conditional black background
-const CustomTabBarButton = ({ children, onPress, accessibilityState, ...props }: BottomTabBarButtonProps) => {
-  const isFocused = accessibilityState?.selected ?? false;
-  
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        flex: 1,
-        backgroundColor: isFocused ? "#000000" : "transparent",
-        borderRadius: 24,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        marginHorizontal: 2,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      {...props}
-    >
-      {children}
-    </Pressable>
-  );
-};
-
-// Floating bottom tab bar styles - white pill with black border
-const floatingTabBarStyle = {
-  position: "absolute" as const,
-  bottom: 20,
-  left: 20,
-  right: 20,
-  backgroundColor: "#ffffff",
-  borderRadius: 32,
-  height: 64,
-  paddingBottom: 8,
-  paddingTop: 8,
-  paddingHorizontal: 4,
-  elevation: 8,
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 4 },
-  shadowOpacity: 0.1,
-  shadowRadius: 12,
-  borderTopWidth: 0,
-  borderWidth: 1,
-  borderColor: "#000000",
-};
 
 // Main Tab Navigator for the 4 main pages
 function MainTabs() {
   return (
     <Tab.Navigator
+      tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#ffffff", // White for active tab (icon and text)
-        tabBarInactiveTintColor: "#000000", // Black for inactive tabs
-        tabBarStyle: floatingTabBarStyle,
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-          marginTop: 2,
-        },
-        tabBarIconStyle: {
-          marginTop: 0,
-        },
-        tabBarLabelVisibilityMode: "selected", // Show label only for selected tab
         lazy: false,
         tabBarHideOnKeyboard: true,
       }}
@@ -112,33 +60,21 @@ function MainTabs() {
         name="Today"
         component={HomeScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons name="auto-awesome" size={24} color={color} />
-          ),
-          tabBarLabel: "Home",
-          tabBarButton: (props) => <CustomTabBarButton {...props} />,
+          title: "Today",
         }}
       />
       <Tab.Screen
         name="Explore"
         component={ExploreScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons name="explore" size={24} color={color} />
-          ),
-          tabBarLabel: "Explore",
-          tabBarButton: (props) => <CustomTabBarButton {...props} />,
+          title: "Explore",
         }}
       />
       <Tab.Screen
         name="Library"
         component={LibraryScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <MaterialIcons name="favorite" size={24} color={color} />
-          ),
-          tabBarLabel: "My Library",
-          tabBarButton: (props) => <CustomTabBarButton {...props} />,
+          title: "Library",
         }}
       />
     </Tab.Navigator>
@@ -179,6 +115,10 @@ function MainApp() {
         <Stack.Screen name="ProgramDetail" component={ProgramDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen name="SessionDetail" component={SessionDetailScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="ComponentComparison" component={ComponentComparisonScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="BNAUIComponents" component={BNAUIComponentsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="ParallaxExample" component={ParallaxExampleScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="OnboardingExample" component={OnboardingExampleScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -205,10 +145,20 @@ function AppContent({ showOnboarding, onOnboardingComplete }: AppContentProps) {
 
 function AppContentWithAuth(props: AppContentProps) {
   const authToken = useAuthToken();
+  const { isLoaded, isSignedIn } = useAuth();
 
   React.useEffect(() => {
     setAuthToken(authToken);
   }, [authToken]);
+
+  // Show sign-in screen if not authenticated
+  if (!isLoaded) {
+    return null; // Loading state
+  }
+
+  if (!isSignedIn) {
+    return <SignInScreen />;
+  }
 
   return <AppContent {...props} />;
 }
@@ -218,7 +168,11 @@ function AppContentWithoutAuth(props: AppContentProps) {
     setAuthToken(null);
   }, []);
 
-  return <AppContent {...props} />;
+  return (
+    <ClerkAvailableProvider available={false}>
+      <AppContent {...props} />
+    </ClerkAvailableProvider>
+  );
 }
 
 export default function App() {
@@ -254,19 +208,27 @@ export default function App() {
     return null;
   }
 
-  // If Clerk key is configured, wrap with ClerkProvider
-  if (clerkPublishableKey) {
+  // In development mode, skip authentication even if Clerk is configured
+  const skipAuth = __DEV__;
+
+  // If Clerk key is configured and not in dev mode, wrap with ClerkProvider
+  if (clerkPublishableKey && !skipAuth) {
     return (
       <ClerkProvider publishableKey={clerkPublishableKey}>
-        <AppContentWithAuth
-          showOnboarding={showOnboarding}
-          onOnboardingComplete={handleOnboardingComplete}
-        />
+        <ClerkAvailableProvider available={true}>
+          <AppContentWithAuth
+            showOnboarding={showOnboarding}
+            onOnboardingComplete={handleOnboardingComplete}
+          />
+        </ClerkAvailableProvider>
       </ClerkProvider>
     );
   }
 
-  // Otherwise, render without Clerk (development mode)
+  // Otherwise, render without Clerk (development mode or no Clerk key)
+  if (skipAuth) {
+    console.log("[App] 🔧 Development mode: Authentication bypassed");
+  }
   return (
     <AppContentWithoutAuth
       showOnboarding={showOnboarding}

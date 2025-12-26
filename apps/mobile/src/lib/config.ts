@@ -24,25 +24,28 @@ const isPhysicalDevice = Constants.isDevice ||
                          Constants.executionEnvironment === "storeClient";
 
 // Determine API base URL with proper fallback chain
-export const API_BASE_URL = (() => {
+export const API_BASE_URL: string = (() => {
   // 1. Explicit env var (highest priority)
-  if (process.env.API_BASE_URL) {
-    return process.env.API_BASE_URL;
+  const envUrl = process.env.API_BASE_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim();
   }
   
   // 2. Expo public env var (EXPO_PUBLIC_* vars are available at build time)
-  if (process.env.EXPO_PUBLIC_API_BASE_URL) {
-    return process.env.EXPO_PUBLIC_API_BASE_URL;
+  const expoPublicUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
+  if (expoPublicUrl && typeof expoPublicUrl === 'string' && expoPublicUrl.trim()) {
+    return expoPublicUrl.trim();
   }
   
-  // 3. app.json extra.API_BASE_URL
-  if (expoExtra.API_BASE_URL) {
-    return expoExtra.API_BASE_URL;
+  // 3. app.json extra.API_BASE_URL (only if it's a non-null string)
+  const appJsonUrl = expoExtra.API_BASE_URL;
+  if (appJsonUrl && typeof appJsonUrl === 'string' && appJsonUrl.trim()) {
+    return appJsonUrl.trim();
   }
   
   // 4. Platform-specific defaults (dev mode only)
   if (__DEV__) {
-    if (isPhysicalDevice && physicalDeviceIP) {
+    if (isPhysicalDevice && physicalDeviceIP && typeof physicalDeviceIP === 'string') {
       return `http://${physicalDeviceIP}:8787`;
     }
     
@@ -66,9 +69,9 @@ if (__DEV__) {
   console.log("[API Config] isPhysicalDevice:", isPhysicalDevice);
   console.log("[API Config] physicalDeviceIP:", physicalDeviceIP);
   console.log("[API Config] Source:", 
-    process.env.API_BASE_URL ? "process.env.API_BASE_URL" :
-    process.env.EXPO_PUBLIC_API_BASE_URL ? "EXPO_PUBLIC_API_BASE_URL" :
-    expoExtra.API_BASE_URL ? "app.json extra.API_BASE_URL" :
+    (process.env.API_BASE_URL && typeof process.env.API_BASE_URL === 'string' && process.env.API_BASE_URL.trim()) ? "process.env.API_BASE_URL" :
+    (process.env.EXPO_PUBLIC_API_BASE_URL && typeof process.env.EXPO_PUBLIC_API_BASE_URL === 'string' && process.env.EXPO_PUBLIC_API_BASE_URL.trim()) ? "EXPO_PUBLIC_API_BASE_URL" :
+    (expoExtra.API_BASE_URL && typeof expoExtra.API_BASE_URL === 'string' && expoExtra.API_BASE_URL.trim()) ? "app.json extra.API_BASE_URL" :
     "platform default"
   );
   console.log("[API Config] ========================================");

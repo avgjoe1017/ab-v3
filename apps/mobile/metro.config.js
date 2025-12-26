@@ -20,4 +20,12 @@ config.resolver.nodeModulesPaths = [
 // 3. Force Metro to resolve (sub)dependencies from the `nodeModulesPaths`
 config.resolver.disableHierarchicalLookup = true;
 
+// 4. Add path alias support for @/
+config.resolver.alias = {
+    "@": projectRoot,
+};
+
+// 5. Ensure react-native-gesture-handler can be resolved
+config.resolver.sourceExts = [...(config.resolver.sourceExts || []), "jsx", "js", "ts", "tsx"];
+
 module.exports = config;

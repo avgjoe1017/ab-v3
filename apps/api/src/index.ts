@@ -22,6 +22,13 @@ import {
   updateAISourceVersion,
   activateAISourceVersion,
 } from "./services/admin/ai-sources";
+import {
+  getCurationCards,
+  trackSessionEvent,
+  saveCurationPreferences,
+  getCurationPreferences,
+  type CurationPreferences,
+} from "./services/curation";
 
 import { prisma } from "./lib/db";
 import { getUserId } from "./lib/auth";
@@ -261,6 +268,101 @@ app.get("/me/struggle", async (c) => {
   }
 });
 
+// ---- CURATION ----
+app.get("/me/curation", async (c) => {
+  try {
+    const userId = await getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+
+    const cards = await getCurationCards(userId);
+    return c.json({ cards });
+  } catch (err: unknown) {
+    console.error("[API] Error fetching curation cards:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to fetch curation cards", errorMessage),
+      500
+    );
+  }
+});
+
+app.post("/me/curation/preferences", async (c) => {
+  try {
+    const body = await c.req.json();
+    const userId = await getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+
+    const preferences: CurationPreferences = {
+      primaryGoal: body.primaryGoal,
+      voicePreference: body.voicePreference,
+      soundPreference: body.soundPreference,
+    };
+
+    await saveCurationPreferences(userId, preferences);
+    return c.json({ success: true });
+  } catch (err: unknown) {
+    console.error("[API] Error saving curation preferences:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to save curation preferences", errorMessage),
+      500
+    );
+  }
+});
+
+app.get("/me/curation/preferences", async (c) => {
+  try {
+    const userId = await getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+
+    const preferences = await getCurationPreferences(userId);
+    return c.json({ preferences });
+  } catch (err: unknown) {
+    console.error("[API] Error fetching curation preferences:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to fetch curation preferences", errorMessage),
+      500
+    );
+  }
+});
+
+app.post("/sessions/:id/events", async (c) => {
+  try {
+    const parsed = uuidParam.safeParse({ id: c.req.param("id") });
+    if (!parsed.success) {
+      return c.json(error("INVALID_SESSION_ID", "Session id must be a UUID", parsed.error.flatten()), 400);
+    }
+
+    const body = await c.req.json();
+    const userId = await getUserId(c);
+    if (!userId) {
+      return c.json(error("UNAUTHORIZED", "Authentication required"), 401);
+    }
+
+    const eventType = body.eventType as "start" | "complete" | "abandon" | "replay" | "skip_affirmation" | "mix_adjust";
+    if (!["start", "complete", "abandon", "replay", "skip_affirmation", "mix_adjust"].includes(eventType)) {
+      return c.json(error("VALIDATION_ERROR", "Invalid eventType"), 400);
+    }
+
+    await trackSessionEvent(userId, parsed.data.id, eventType, body.metadata);
+    return c.json({ success: true });
+  } catch (err: unknown) {
+    console.error("[API] Error tracking session event:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return c.json(
+      error("INTERNAL_ERROR", "Failed to track session event", errorMessage),
+      500
+    );
+  }
+});
+
 // ---- SESSIONS ----
 
 app.get("/sessions", async (c) => {
@@ -303,14 +405,14 @@ app.post("/sessions", async (c) => {
   
   // Ensure user exists (for foreign key constraint)
   // In production with Clerk, user will already exist from auth flow
-  let user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    // Create user if doesn't exist (in production, Clerk webhook should create user)
-    user = await prisma.user.create({ 
-      data: { 
-        id: userId, 
-        email: `user-${userId}@example.com` // Email will come from auth provider in production
-      } 
+  if (userId) {
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: {
+        id: userId,
+        email: `user-${userId}@clerk.dev`, // Placeholder email, will be updated from Clerk user data if available
+      },
     });
   }
   
@@ -326,10 +428,15 @@ app.post("/sessions", async (c) => {
   const frequencyInfo = parsedBody.data.solfeggioHz ? null : getFrequencyForGoalTag(parsedBody.data.goalTag);
 
   // Create DB entry
+  // Use relation syntax for ownerUser (Prisma prefers this over direct foreign key)
   const session = await prisma.session.create({
     data: {
       source: "user",
-      ownerUserId: userId, // Ensure we track ownership for quota
+      ...(userId ? {
+        ownerUser: {
+          connect: { id: userId }
+        }
+      } : {}),
       title: parsedBody.data.title,
       goalTag: parsedBody.data.goalTag,
       durationSec: undefined, // Infinite
