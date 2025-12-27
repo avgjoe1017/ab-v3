@@ -1,8 +1,9 @@
 import React from "react";
-import { View, StyleSheet, ViewStyle } from "react-native";
+import { View, StyleSheet, ViewStyle, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { theme } from "../theme/tokens";
+import { HamburgerButton } from "./HamburgerButton";
 
 type GradientPreset = "default" | "calm" | "player" | "hero" | "sleep" | "focus" | "energy";
 
@@ -12,6 +13,8 @@ interface AppScreenProps {
   gradient?: boolean;
   gradientPreset?: GradientPreset;
   backgroundColor?: string;
+  title?: string;
+  showHamburger?: boolean;
 }
 
 /**
@@ -24,6 +27,8 @@ export const AppScreen: React.FC<AppScreenProps> = ({
   gradient = true,
   gradientPreset = "default",
   backgroundColor,
+  title,
+  showHamburger = false,
 }) => {
   const getGradientColors = (): readonly [string, string, ...string[]] => {
     switch (gradientPreset) {
@@ -62,6 +67,13 @@ export const AppScreen: React.FC<AppScreenProps> = ({
         />
       )}
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+        {(showHamburger || title) && (
+          <View style={styles.header}>
+            {showHamburger && <HamburgerButton />}
+            {title && <Text style={styles.headerTitle}>{title}</Text>}
+            {showHamburger && !title && <View style={styles.headerSpacer} />}
+          </View>
+        )}
         {children}
       </SafeAreaView>
     </View>
@@ -74,5 +86,23 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.1)",
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    textAlign: "center",
+  },
+  headerSpacer: {
+    width: 40, // Match hamburger button width
   },
 });

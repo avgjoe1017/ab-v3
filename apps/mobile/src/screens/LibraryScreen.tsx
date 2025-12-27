@@ -97,7 +97,7 @@ export default function LibraryScreen({ navigation }: any) {
   };
 
   return (
-    <AppScreen>
+    <AppScreen title="Library" showHamburger={true}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}

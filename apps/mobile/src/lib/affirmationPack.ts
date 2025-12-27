@@ -410,6 +410,7 @@ export function packToSessionPayload(pack: AffirmationPack, usedTitles: string[]
   affirmations: string[];
   voiceId: string;
   pace: "slow";
+  solfeggioHz?: number;
 } {
   // Extract goal tag from goal text (simple keyword matching)
   let goalTag: string | undefined;
@@ -427,7 +428,16 @@ export function packToSessionPayload(pack: AffirmationPack, usedTitles: string[]
   // Generate a positive, encouraging title instead of using raw goal text
   const generatedTitle = generateSessionTitle(pack.goal, goalTag, usedTitles);
 
-  return {
+  // Build base payload
+  const payload: {
+    localDraftId: string;
+    title: string;
+    goalTag?: string;
+    affirmations: string[];
+    voiceId: string;
+    pace: "slow";
+    solfeggioHz?: number;
+  } = {
     localDraftId: randomUUID(), // Generate a UUID for the draft
     title: generatedTitle,
     goalTag,
@@ -435,5 +445,15 @@ export function packToSessionPayload(pack: AffirmationPack, usedTitles: string[]
     voiceId: pack.audioSettings.voiceId,
     pace: "slow", // Required by DraftSessionSchema
   };
+
+  // Add solfeggioHz if using solfeggio brain layer
+  if (pack.audioSettings.brainLayerType === "solfeggio" && pack.audioSettings.brainLayerPreset) {
+    const hz = Number(pack.audioSettings.brainLayerPreset);
+    if (!isNaN(hz) && hz > 0) {
+      payload.solfeggioHz = hz;
+    }
+  }
+
+  return payload;
 }
 

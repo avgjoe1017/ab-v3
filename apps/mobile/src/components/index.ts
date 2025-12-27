@@ -33,4 +33,6 @@ export type { CurationCard } from "./ForYouSection";
 export { TuneForYou } from "./TuneForYou";
 export { LivingOrb } from "./LivingOrb";
 export { default as FloatingTabBar } from "./FloatingTabBar";
+export { DrawerContent } from "./DrawerContent";
+export { HamburgerButton } from "./HamburgerButton";
 

@@ -54,6 +54,20 @@ Then:
 - Press `a` for Android emulator  
 - Scan QR code with Expo Go app
 
+### Troubleshooting
+
+**"Body is unusable: Body has already been read" error**:
+If you encounter this error when starting Expo, clear the cache:
+```bash
+cd apps/mobile
+npx expo start --clear
+```
+
+**Other common issues**:
+- Clear Metro cache: `npx expo start -c`
+- Use offline mode: `npx expo start --offline`
+- Reinstall dependencies: `rm -rf node_modules && pnpm install`
+
 ### Testing Pre-roll
 
 1. Open app → Home screen shows catalog sessions

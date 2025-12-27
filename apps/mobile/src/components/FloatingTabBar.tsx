@@ -13,7 +13,10 @@ const BOTTOM_GAP = 10;
 function metaForRoute(routeName: string) {
   const key = routeName.toLowerCase();
 
-  // Match your route names: "Today", "Explore", "Library"
+  // Match your route names: "Compose", "Today", "Explore", "Library"
+  if (key.includes("compose") || key.includes("chat")) {
+    return { icon: "chat-bubble-outline" as const, fallbackLabel: "Compose" };
+  }
   if (key.includes("today") || key.includes("home") || key === "index") {
     return { icon: "auto-awesome" as const, fallbackLabel: "Today" };
   }

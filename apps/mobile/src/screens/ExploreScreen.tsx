@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Image } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { AppScreen, Chip, SectionHeader, MiniPlayer, DuotoneCard, SessionTile, ExploreHeroDeck, type DuotonePalette, type HeroSession } from "../components";
 import { theme } from "../theme";
 import { useQuery } from "@tanstack/react-query";
@@ -35,18 +37,13 @@ export default function ExploreScreen({ navigation }: any) {
   });
 
   // Get all sessions that will be displayed on this page
-  const allDisplayedSessions = sessions?.slice(0, 8) || [];
+  const allDisplayedSessions = sessions?.slice(0, 12) || [];
   
   // Get unique gradients for all sessions (avoids duplicate icons)
   const sessionGradients = useMemo(
     () => getUniqueSessionGradients(allDisplayedSessions),
     [allDisplayedSessions]
   );
-
-  const dailyPickSession = allDisplayedSessions[0];
-  const dailyPickGradient = dailyPickSession 
-    ? sessionGradients.get(dailyPickSession.id)!
-    : { palette: "lavender" as const, colors: ["#b8a8d8", "#a090c0"] as [string, string], iconColor: "#d8c8f0", icon: "psychology" as const };
 
   // Featured sessions for Hero Deck (4-6 sessions)
   const featuredSessions: HeroSession[] = useMemo(() => {
@@ -62,8 +59,12 @@ export default function ExploreScreen({ navigation }: any) {
     return featured;
   }, [sessions]);
 
-  const recommendedSessions = allDisplayedSessions.slice(1, 4);
-  const newArrivals = allDisplayedSessions.slice(4, 8);
+  // Recently played (last 4 sessions)
+  const recentlyPlayed = allDisplayedSessions.slice(0, 4);
+  // Recommended sessions
+  const recommendedSessions = allDisplayedSessions.slice(4, 8);
+  // Editor's picks
+  const editorsPicks = allDisplayedSessions.slice(8, 12);
 
   // Goal cards have their own distinct icons (not from session data)
   const goalCards = [
@@ -92,30 +93,44 @@ export default function ExploreScreen({ navigation }: any) {
   };
 
   return (
-    <AppScreen gradient={true} gradientPreset="calm">
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.colors.background.primary} />
+      
+      {/* Spotify-style Header */}
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>Explore</Text>
+          <Pressable
+            style={styles.settingsButton}
+            onPress={() => navigation.getParent()?.navigate("Settings")}
+          >
+            <MaterialIcons name="settings" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+        </View>
+        
+        {/* Search Bar - Spotify style */}
+        <View style={styles.searchContainer}>
+          <MaterialIcons name="search" size={20} color={theme.colors.text.tertiary} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search"
+            placeholderTextColor={theme.colors.text.muted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")} style={styles.searchClear}>
+              <MaterialIcons name="close" size={18} color={theme.colors.text.tertiary} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          {/* Search Bar */}
-          <View style={styles.searchContainer}>
-            <MaterialIcons name="search" size={20} color="#6c757d" style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search"
-              placeholderTextColor="#adb5bd"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            <Pressable style={styles.searchFilterButton}>
-              <MaterialIcons name="tune" size={18} color="#ffffff" />
-            </Pressable>
-          </View>
-        </View>
-
         {/* Tag Filters */}
         <ScrollView 
           horizontal 
@@ -133,6 +148,33 @@ export default function ExploreScreen({ navigation }: any) {
           ))}
         </ScrollView>
 
+        {/* Recently Played - Spotify style horizontal scroll */}
+        {recentlyPlayed.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Recently played</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentlyPlayedScroll}
+            >
+              {recentlyPlayed.map((session) => {
+                const gradient = sessionGradients.get(session.id);
+                return (
+                  <SessionTile
+                    key={session.id}
+                    sessionId={session.id}
+                    title={session.title}
+                    goalTag={session.goalTag}
+                    icon={gradient?.icon}
+                    onPress={() => handleSessionPress(session.id)}
+                    variant="default"
+                  />
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Hero Sessions Deck */}
         {featuredSessions.length > 0 && (
           <View style={styles.heroDeckSection}>
@@ -144,32 +186,34 @@ export default function ExploreScreen({ navigation }: any) {
           </View>
         )}
 
-        {/* Recommended for You - Using SessionTile with unique icons */}
-        <View style={styles.section}>
-          <SectionHeader title="Recommended for You" actionLabel="See All" />
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.recommendedScroll}
-          >
-            {recommendedSessions.map((session) => {
-              const gradient = sessionGradients.get(session.id);
-              return (
-                <SessionTile
-                  key={session.id}
-                  sessionId={session.id}
-                  title={session.title}
-                  goalTag={session.goalTag}
-                  icon={gradient?.icon}
-                  onPress={() => handleSessionPress(session.id)}
-                  variant="default"
-                />
-              );
-            })}
-          </ScrollView>
-        </View>
+        {/* Recommended for You */}
+        {recommendedSessions.length > 0 && (
+          <View style={styles.section}>
+            <SectionHeader title="Recommended for You" actionLabel="See All" />
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recommendedScroll}
+            >
+              {recommendedSessions.map((session) => {
+                const gradient = sessionGradients.get(session.id);
+                return (
+                  <SessionTile
+                    key={session.id}
+                    sessionId={session.id}
+                    title={session.title}
+                    goalTag={session.goalTag}
+                    icon={gradient?.icon}
+                    onPress={() => handleSessionPress(session.id)}
+                    variant="default"
+                  />
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
-        {/* Browse by Goal - Using DuotoneCard */}
+        {/* Browse by Goal - Spotify style grid */}
         <View style={styles.section}>
           <SectionHeader title="Browse by Goal" />
           <View style={styles.goalsGrid}>
@@ -217,50 +261,52 @@ export default function ExploreScreen({ navigation }: any) {
           </ScrollView>
         </View>
 
-        {/* New Arrivals - Using compact DuotoneCard style */}
-        <View style={styles.section}>
-          <SectionHeader title="New Arrivals" />
-          <View style={styles.newArrivalsList}>
-            {newArrivals.map((item) => {
-              const itemGradient = sessionGradients.get(item.id)!;
-              return (
-                <Pressable
-                  key={item.id}
-                  style={({ pressed }) => [
-                    styles.newArrivalItem,
-                    pressed && styles.newArrivalPressed,
-                  ]}
-                  onPress={() => handleSessionPress(item.id)}
-                >
-                  <View style={styles.newArrivalIconContainer}>
-                    <LinearGradient
-                      colors={itemGradient.colors}
-                      locations={itemGradient.locations}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.newArrivalIconGradient}
-                    >
-                      <MaterialIcons
-                        name={itemGradient.icon}
-                        size={24}
-                        color="#fff"
-                      />
-                    </LinearGradient>
-                  </View>
-                  <View style={styles.newArrivalInfo}>
-                    <Text style={styles.newArrivalTitle}>{item.title}</Text>
-                    <Text style={styles.newArrivalSubtitle}>
-                      {item.goalTag ? formatGoalTag(item.goalTag) : "Session"}
-                    </Text>
-                  </View>
-                  <View style={styles.newArrivalPlayButton}>
-                    <MaterialIcons name="play-arrow" size={18} color={theme.colors.text.primary} />
-                  </View>
-                </Pressable>
-              );
-            })}
+        {/* Editor's Picks - Spotify style */}
+        {editorsPicks.length > 0 && (
+          <View style={styles.section}>
+            <SectionHeader title="Editor's picks" />
+            <View style={styles.editorsPicksList}>
+              {editorsPicks.map((item) => {
+                const itemGradient = sessionGradients.get(item.id)!;
+                return (
+                  <Pressable
+                    key={item.id}
+                    style={({ pressed }) => [
+                      styles.editorsPickItem,
+                      pressed && styles.editorsPickPressed,
+                    ]}
+                    onPress={() => handleSessionPress(item.id)}
+                  >
+                    <View style={styles.editorsPickIconContainer}>
+                      <LinearGradient
+                        colors={itemGradient.colors}
+                        locations={itemGradient.locations}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.editorsPickIconGradient}
+                      >
+                        <MaterialIcons
+                          name={itemGradient.icon}
+                          size={24}
+                          color="#fff"
+                        />
+                      </LinearGradient>
+                    </View>
+                    <View style={styles.editorsPickInfo}>
+                      <Text style={styles.editorsPickTitle}>{item.title}</Text>
+                      <Text style={styles.editorsPickSubtitle}>
+                        {item.goalTag ? formatGoalTag(item.goalTag) : "Session"}
+                      </Text>
+                    </View>
+                    <View style={styles.editorsPickPlayButton}>
+                      <MaterialIcons name="play-arrow" size={18} color={theme.colors.text.primary} />
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-        </View>
+        )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
@@ -270,7 +316,7 @@ export default function ExploreScreen({ navigation }: any) {
         sessionId={currentSessionId}
         onPress={handleMiniPlayerPress}
       />
-    </AppScreen>
+    </SafeAreaView>
   );
 }
 
@@ -372,6 +418,10 @@ function ProgramCard({ program, onPress }: ProgramCardProps) {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.background.primary,
+  },
   scrollView: {
     flex: 1,
   },
@@ -379,142 +429,80 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   header: {
-    flexDirection: "column",
     paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[12],
+    paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[4],
-    backgroundColor: "transparent",
+    backgroundColor: theme.colors.background.primary,
+  },
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[4],
+  },
+  headerTitle: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: theme.typography.fontSize["2xl"],
+    fontWeight: "700",
+    color: theme.colors.text.primary,
+  },
+  settingsButton: {
+    padding: theme.spacing[1],
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     width: "100%",
-    backgroundColor: "#f5f6f7",
-    borderRadius: 24,
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.background.secondary,
+    borderRadius: theme.radius.full,
+    paddingHorizontal: theme.spacing[4],
     height: 48,
+    borderWidth: 1,
+    borderColor: theme.colors.border.subtle,
   },
   searchIcon: {
-    marginRight: 10,
+    marginRight: theme.spacing[2],
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: "#212529",
+    fontSize: theme.typography.fontSize.md,
+    color: theme.colors.text.primary,
     paddingVertical: 0,
+    fontFamily: theme.typography.fontFamily.regular,
   },
-  searchFilterButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#212529",
-    alignItems: "center",
-    justifyContent: "center",
-    marginLeft: 8,
+  searchClear: {
+    padding: theme.spacing[1],
+    marginLeft: theme.spacing[2],
   },
   filtersContainer: {
     paddingHorizontal: theme.spacing[6],
     paddingRight: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
+    paddingBottom: theme.spacing[4],
     gap: theme.spacing[3],
   },
   section: {
     paddingHorizontal: theme.spacing[6],
     marginTop: theme.spacing[6],
   },
+  sectionTitle: {
+    fontFamily: theme.typography.fontFamily.bold,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: "600",
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing[4],
+  },
   heroDeckSection: {
-    paddingHorizontal: 0, // Hero deck handles its own padding
+    paddingHorizontal: 0,
     marginTop: theme.spacing[4],
   },
-  // Daily Pick - DuotoneCard style
-  dailyPickCard: {
-    width: "100%",
-    aspectRatio: 4 / 3,
-    borderRadius: theme.radius.xl,
-    overflow: "hidden",
+  recentlyPlayedScroll: {
+    paddingRight: theme.spacing[6],
+    gap: theme.spacing[4],
   },
-  dailyPickGradient: {
-    flex: 1,
-    position: "relative",
-  },
-  dailyPickIconContainer: {
-    position: "absolute",
-    top: -30,
-    right: -40,
-    opacity: 0.8,
-  },
-  dailyPickContent: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: theme.spacing[5],
-    zIndex: 20,
-  },
-  dailyPickBadges: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[2],
-  },
-  dailyPickBadgePrimary: {
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    borderRadius: theme.radius.full,
-  },
-  dailyPickBadgeSecondary: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
-    borderRadius: theme.radius.full,
-  },
-  dailyPickBadgeText: {
-    ...theme.typography.styles.caption,
-    fontSize: theme.typography.fontSize.xs,
-    fontWeight: theme.typography.fontWeight.bold,
-    color: "#fff",
-    textTransform: "uppercase",
-    letterSpacing: theme.typography.letterSpacing.wider,
-  },
-  dailyPickTitle: {
-    ...theme.typography.styles.h1,
-    fontSize: theme.typography.fontSize["2xl"],
-    color: "#fff",
-    marginBottom: theme.spacing[2],
-  },
-  dailyPickDescription: {
-    color: "rgba(255, 255, 255, 0.8)",
-    fontSize: theme.typography.fontSize.base,
-    lineHeight: theme.typography.lineHeight.normal,
-    marginBottom: theme.spacing[2],
-  },
-  dailyPickButton: {
-    marginTop: theme.spacing[2],
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    height: 44,
-    width: "100%",
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
-    borderRadius: theme.radius.full,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
-  },
-  dailyPickButtonText: {
-    color: "#fff",
-    fontSize: theme.typography.fontSize.base,
-    fontWeight: theme.typography.fontWeight.semibold,
-  },
-  // Recommended - uses SessionTile
   recommendedScroll: {
     paddingRight: theme.spacing[6],
     gap: theme.spacing[4],
   },
-  // Goals Grid - uses DuotoneCard
   goalsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -525,13 +513,12 @@ const styles = StyleSheet.create({
     width: "48%",
     minWidth: 150,
   },
-  // New Arrivals - compact gradient style
-  newArrivalsList: {
+  editorsPicksList: {
     flexDirection: "column",
     gap: theme.spacing[3],
     marginTop: theme.spacing[3],
   },
-  newArrivalItem: {
+  editorsPickItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[4],
@@ -540,44 +527,43 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.lg,
     borderWidth: 1,
     borderColor: theme.colors.border.glass,
-    // Apple-like shadow: subtle opacity with increased blur
     shadowColor: "#000000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.05,
     shadowRadius: 20,
     elevation: 2,
   },
-  newArrivalPressed: {
+  editorsPickPressed: {
     opacity: 0.8,
     transform: [{ scale: 0.99 }],
   },
-  newArrivalIconContainer: {
+  editorsPickIconContainer: {
     width: 52,
     height: 52,
     borderRadius: theme.radius.md,
     overflow: "hidden",
   },
-  newArrivalIconGradient: {
+  editorsPickIconGradient: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  newArrivalInfo: {
+  editorsPickInfo: {
     flex: 1,
     minWidth: 0,
   },
-  newArrivalTitle: {
+  editorsPickTitle: {
     ...theme.typography.styles.body,
-    fontSize: theme.typography.fontSize.base,
+    fontSize: theme.typography.fontSize.md,
     fontWeight: theme.typography.fontWeight.bold,
     color: theme.colors.text.primary,
   },
-  newArrivalSubtitle: {
+  editorsPickSubtitle: {
     ...theme.typography.styles.caption,
     color: theme.colors.text.tertiary,
     marginTop: theme.spacing[1],
   },
-  newArrivalPlayButton: {
+  editorsPickPlayButton: {
     width: 36,
     height: 36,
     borderRadius: theme.radius.full,
@@ -585,7 +571,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  // Programs section
   programsIntro: {
     ...theme.typography.styles.caption,
     color: theme.colors.text.tertiary,

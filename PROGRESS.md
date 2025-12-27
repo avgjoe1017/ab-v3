@@ -9733,4 +9733,516 @@ The Prisma client is now fully in sync with the schema, and the `solfeggioHz` fi
 
 **Files Modified:**
 - `apps/mobile/src/App.tsx` - Replaced custom tab bar with FloatingTabBar, simplified Tab.Screen options
-- `apps/mobile/src/components/index.ts` - Added FloatingTabBar export
+
+---
+
+## 2025-01-14 - Codebase Overview for Refactoring
+
+**Time:** Current session
+
+**Change:** Created comprehensive codebase overview document to guide refactoring efforts.
+
+**Reason:** User requested familiarization with the codebase in preparation for a thorough refactor. Created a detailed overview document that captures the architecture, key technologies, data models, and potential refactoring considerations.
+
+**What Was Documented:**
+1. **Architecture Summary**: Monorepo structure, key technologies, and core data models
+2. **Audio Engine Architecture**: Detailed breakdown of the 3-track playback system
+3. **API Endpoints**: Overview of public, user, and admin endpoints
+4. **Authentication Flow**: Current state and integration status
+5. **State Management Patterns**: React Query, Zustand, and AudioEngine patterns
+6. **Key Files**: Important files to understand for each part of the system
+7. **Known Issues/TODOs**: Items found during code exploration
+8. **Refactoring Considerations**: Potential areas for improvement
+
+**Files Created:**
+- `MD_DOCS/REFACTOR_OVERVIEW.md` - Comprehensive codebase overview (400+ lines)
+
+**Key Findings:**
+- Well-structured monorepo with clear separation of concerns
+- Audio engine is well-modularized with singleton pattern
+- API server has all routes in single file (2000+ lines) - potential refactoring target
+- Authentication foundation ready but needs full Clerk integration
+- Good documentation culture with extensive MD_DOCS folder
+- No test files found - testing infrastructure could be added
+- Contracts package provides strong type safety as single source of truth
+
+**Technical Highlights:**
+- Mobile: Expo 54, React Native 0.81.5, React 19.1.0
+- API: Bun + Hono + Prisma (SQLite dev, Postgres production target)
+- Audio: expo-audio with sophisticated 3-track mixing system
+- State: React Query for server state, Zustand for client state
+- Auth: Clerk (partially integrated)
+
+**Refactoring Priorities Identified:**
+1. Split large API index.ts into route modules
+2. Complete Clerk authentication integration
+3. Add testing infrastructure
+4. Improve type safety in navigation props
+5. Consider code splitting for mobile app
+6. External job queue worker (currently in-process)
+
+---
+
+## 2025-12-26 - Chat Composer Refactor (LLM-Style UI)
+
+**Time:** Current session
+
+**Change:** Implemented comprehensive "Chat Composer" refactor to make the app feel like an LLM app with a conversational interface for session creation.
+
+**Reason:** User requested a major refactor to consolidate multiple generation flows (Quick/Guided from AIAffirmation, Home screen entry) into a single, unified Composer pattern with a chat-first UI.
+
+### Architecture Changes
+
+**1. New Core Hook: `useSessionComposer`**
+- Single source of truth for session composition workflow
+- Manages phases: `idle → planning → generating → ready → creating`
+- Handles goal/context capture, generation, session creation
+- Includes deterministic planner (can swap for LLM later without touching UI)
+- Proper title deduplication via GET /sessions
+- Supports solfeggioHz in session payloads
+
+**2. New Chat Composer Screen**
+- LLM-style chat interface as primary entry point
+- Shows message transcript (user + assistant)
+- Suggested goal presets as chips
+- Length options (6/12/18/24 affirmations)
+- Session preview when generation completes
+- Edit and Audio modals reusing existing components
+
+**3. Updated Tab Navigation**
+- Added "Compose" as first tab (chat-bubble-outline icon)
+- Now 4 tabs: Compose, Today, Explore, Library
+- FloatingTabBar updated with Compose route handling
+
+**4. Fixed affirmationPack.ts**
+- `packToSessionPayload()` now includes `solfeggioHz` when brain layer is solfeggio
+- Backend can now receive solfeggio frequency from frontend
+
+### Files Created
+
+**Hooks:**
+- `apps/mobile/src/hooks/useSessionComposer.ts` - Core composer state machine (~280 lines)
+
+**Types & Constants:**
+- `apps/mobile/src/screens/ChatComposer/types.ts` - Chat message types, chip actions
+- `apps/mobile/src/screens/ChatComposer/constants.ts` - Goal presets, length options, messages
+
+**Components:**
+- `apps/mobile/src/screens/ChatComposer/components/MessageBubble.tsx` - Chat bubble UI
+- `apps/mobile/src/screens/ChatComposer/components/ChoiceChips.tsx` - Selectable chip rows
+- `apps/mobile/src/screens/ChatComposer/components/ComposerInputBar.tsx` - Bottom input + send
+
+**Screen:**
+- `apps/mobile/src/screens/ChatComposerScreen.tsx` - Main chat composer screen (~350 lines)
+
+### Files Modified
+
+- `apps/mobile/src/hooks/index.ts` - Export useSessionComposer + types
+- `apps/mobile/src/lib/affirmationPack.ts` - Added solfeggioHz to payload
+- `apps/mobile/src/components/FloatingTabBar.tsx` - Added Compose route handling
+- `apps/mobile/src/App.tsx` - Added ChatComposerScreen import and Compose tab
+
+### Technical Highlights
+
+**State Machine Phases:**
+```
+idle → (user sets goal) → planning → (auto) → generating → ready → creating → (navigate to Player)
+```
+
+**Planner Logic (deterministic, swappable for LLM):**
+- Infers sessionType from goal keywords (Focus, Sleep, Anxiety Relief, Meditate, etc.)
+- Maps sessionType to goalTag for backend frequency selection
+- Suggests appropriate brain layer (binaural/solfeggio) and solfeggio Hz
+
+**Component Reuse:**
+- ReviewEditStep from AIAffirmation for affirmation editing
+- AudioSettingsPanel from AIAffirmation for audio settings
+- AppScreen, IconButton, etc. from components library
+
+### User-Facing Changes
+
+1. **New "Compose" tab** - First tab, chat-style interface
+2. **Goal presets** - Quick start chips (Sleep, Focus, Calm anxiety, etc.)
+3. **Session length selection** - 6/12/18/24 affirmations
+4. **Preview & tinker** - See affirmations, edit, adjust audio before starting
+5. **Modals for editing** - Edit affirmations and audio settings in slide-up modals
+
+### Next Steps (from user's plan)
+
+1. ✅ Consolidate to one Composer state machine
+2. ✅ Add ChatComposerScreen as primary entry point
+3. 🔲 Fix "tinker" loop TODOs (mostly done, modals wired up)
+4. 🔲 Add minimal planner endpoint (POST /composer/plan) - optional
+5. 🔲 Audio reliability: tighten watchdog for micro-cut prevention
+
+### Documentation Created
+
+- `MD_DOCS/REFACTOR_OVERVIEW.md` - Comprehensive codebase overview for refactoring
+
+---
+
+## 2025-12-26 - ChatGPT/Claude-Style UI Redesign
+
+**Time:** Current session
+
+**Change:** Redesigned ChatComposerScreen to match ChatGPT/Claude's exact visual style - clean, minimal, full-width messages with proper spacing.
+
+**Reason:** User requested the chat/compose window to look exactly like ChatGPT/Claude for a familiar, professional chat interface experience.
+
+### Visual Changes
+
+**1. Message Bubbles**
+- Full-width messages (85% max width, centered)
+- User messages: Right-aligned, iOS blue (#007AFF) background, white text
+- Assistant messages: Left-aligned, light gray (#F2F2F7) background, black text
+- Clean rounded corners (18px) with subtle tail (4px corner on bottom)
+- No heavy borders or shadows
+- Proper spacing between messages (12px vertical padding)
+
+**2. Typing Indicator**
+- Animated three-dot typing indicator (replaces ActivityIndicator)
+- Smooth opacity animation matching ChatGPT style
+- Appears when assistant is generating
+
+**3. Input Bar**
+- Clean, minimal design matching ChatGPT
+- Light gray background (#F2F2F7) with subtle border
+- Rounded (24px) container
+- Send button only appears when text is entered (blue circle with arrow)
+- No character counter clutter
+- Proper safe area handling
+
+**4. Screen Layout**
+- Removed AppScreen wrapper (full-screen chat experience)
+- White background (#FFFFFF)
+- No header/title bar
+- Clean, minimal aesthetic
+- Proper keyboard avoidance
+
+**5. Chip Styling**
+- Updated to match ChatGPT's chip style
+- Light gray background with subtle borders
+- Selected/primary chips use blue (#007AFF)
+- Better spacing and padding
+
+### Files Modified
+
+- `apps/mobile/src/screens/ChatComposer/components/MessageBubble.tsx` - Complete redesign with typing indicator
+- `apps/mobile/src/screens/ChatComposer/components/ComposerInputBar.tsx` - ChatGPT-style input bar
+- `apps/mobile/src/screens/ChatComposerScreen.tsx` - Removed AppScreen wrapper, updated layout
+- `apps/mobile/src/screens/ChatComposer/components/ChoiceChips.tsx` - Updated chip styling
+
+### Technical Details
+
+**Color Palette:**
+- User message: `#007AFF` (iOS blue)
+- Assistant message: `#F2F2F7` (light gray)
+- Text: `#000000` (black) / `#FFFFFF` (white)
+- Background: `#FFFFFF` (white)
+- Borders: `#E5E5E5` (subtle gray)
+
+**Animations:**
+- Typing indicator uses Animated API with staggered opacity
+- Smooth scroll to bottom on new messages
+- Native keyboard avoidance
+
+**Layout:**
+- Messages: 85% max width, centered
+- Padding: 16px horizontal, 12px vertical per message
+- Input: 16px horizontal padding, 12px top padding
+
+---
+
+## 2025-12-26 - Side Drawer Navigation (Hamburger Menu)
+
+**Time:** Current session
+
+**Change:** Replaced bottom tab menu with side drawer navigation (hamburger menu) for a cleaner, more modern navigation pattern.
+
+**Reason:** User requested removal of bottom tab menu and addition of side menu that can be expanded by hamburger button.
+
+### Navigation Changes
+
+**1. Replaced Bottom Tabs with Drawer**
+- Removed `createBottomTabNavigator` and `FloatingTabBar`
+- Added `createDrawerNavigator` from `@react-navigation/drawer`
+- Installed `@react-navigation/drawer` and `react-native-drawer-layout`
+
+**2. Custom Drawer Content**
+- Created `DrawerContent.tsx` component with menu items:
+  - Compose (Chat)
+  - Today (Home)
+  - Explore
+  - Library
+  - Settings
+- Clean, minimal design matching app aesthetic
+- Active route highlighting with blue accent
+- Icons for each menu item
+
+**3. Hamburger Button Component**
+- Created `HamburgerButton.tsx` for opening drawer
+- Added to screens that need navigation access
+- Integrated into AppScreen component
+
+**4. Updated AppScreen**
+- Added optional `title` and `showHamburger` props
+- Header with hamburger button and title when enabled
+- Maintains existing gradient and styling options
+
+**5. Screen Updates**
+- ChatComposerScreen: Added header with hamburger button
+- HomeScreen: Added hamburger button via AppScreen
+- ExploreScreen: Added hamburger button via AppScreen
+- LibraryScreen: Added hamburger button via AppScreen
+
+### Files Created
+
+- `apps/mobile/src/components/DrawerContent.tsx` - Custom drawer menu component
+- `apps/mobile/src/components/HamburgerButton.tsx` - Hamburger menu button
+
+### Files Modified
+
+- `apps/mobile/src/App.tsx` - Replaced Tab navigator with Drawer navigator
+- `apps/mobile/src/components/AppScreen.tsx` - Added hamburger button and title support
+- `apps/mobile/src/components/index.ts` - Exported new components
+- `apps/mobile/src/screens/ChatComposerScreen.tsx` - Added header with hamburger
+- `apps/mobile/src/screens/HomeScreen.tsx` - Added hamburger via AppScreen
+- `apps/mobile/src/screens/ExploreScreen.tsx` - Added hamburger via AppScreen
+- `apps/mobile/src/screens/LibraryScreen.tsx` - Added hamburger via AppScreen
+- `apps/mobile/package.json` - Added drawer navigation dependencies
+
+### Technical Details
+
+**Drawer Configuration:**
+- Width: 280px
+- Type: Front drawer (overlays content)
+- Overlay: Semi-transparent black (rgba(0, 0, 0, 0.5))
+- Initial route: Compose
+- Swipe gesture enabled from left edge
+
+**Navigation Structure:**
+```
+Stack Navigator
+  └─ MainDrawer (Drawer Navigator)
+      ├─ Compose (ChatComposerScreen)
+      ├─ Today (HomeScreen)
+      ├─ Explore (ExploreScreen)
+      ├─ Library (LibraryScreen)
+      └─ Settings (SettingsScreen)
+  └─ Detail Screens (Stack)
+      ├─ Player
+      ├─ Editor
+      └─ ... (other detail screens)
+```
+
+**User Experience:**
+- Hamburger button visible on main screens
+- Swipe from left edge to open drawer
+- Tap hamburger to open/close drawer
+- Active route highlighted in drawer menu
+- Smooth animations and transitions
+
+---
+
+## 2025-12-26 - Fixed Reanimated 3 Compatibility Issue with Drawer Navigator
+
+**Time:** ~19:26
+
+### Issue
+The Drawer Navigator was throwing an error indicating it was using a "legacy implementation" incompatible with Reanimated 3/4. The error suggested that `@react-navigation/drawer` v6.7.2 was defaulting to a legacy mode despite having Reanimated 4.1.1 installed.
+
+### Root Cause
+React Navigation Drawer v6 requires `react-native-drawer-layout` as a peer dependency to use the new Reanimated 3+ implementation. While the drawer package should automatically detect and use the new implementation when Reanimated 3+ is present, the explicit dependency was missing, causing it to fall back to legacy mode.
+
+### Solution
+Installed `react-native-drawer-layout` v4.2.1 explicitly. This package provides the underlying drawer implementation that React Navigation Drawer uses with Reanimated 3+.
+
+### Files Modified
+- `apps/mobile/package.json` - Added `react-native-drawer-layout` ^4.2.1 dependency
+
+### Technical Details
+- **Package Manager:** pnpm (monorepo workspace)
+- **Drawer Version:** @react-navigation/drawer ^6.7.2
+- **Reanimated Version:** react-native-reanimated ~4.1.1
+- **Drawer Layout Version:** react-native-drawer-layout ^4.2.1
+
+### Next Steps
+After installing the package, the app should be rebuilt to ensure Metro bundler picks up the changes:
+1. Clear Metro cache: `pnpm start --clear` (or `npx expo start --clear`)
+2. Rebuild native code if needed: `npx expo prebuild` (for bare workflow) or restart the development build
+
+### Verification
+The drawer should now use the Reanimated 3+ implementation automatically. No explicit configuration changes were needed in the drawer setup - React Navigation Drawer v6 automatically detects and uses the new implementation when `react-native-drawer-layout` is available.
+
+### Update - January 2025
+Fixed version mismatch: Updated `react-native-drawer-layout` from 3.3.2 to ^4.2.1 to match the intended version. The Drawer.Navigator does NOT have `useLegacyImplementation` prop (which is correct - it should not be present with Reanimated 3+). 
+
+**Important Note**: If using **Expo Go**, this error may persist because Expo Go has pre-bundled native modules and `react-native-drawer-layout` may not be included in the Expo SDK bundle. The solution is to use a **development build** instead:
+
+1. Reinstall dependencies: `pnpm install`
+2. Clear all caches: `rm -rf node_modules/.cache .expo` then `pnpm start --clear`
+3. **Create a development build** (Expo Go won't work for custom native modules):
+   ```bash
+   # For iOS
+   npx expo run:ios
+   
+   # For Android  
+   npx expo run:android
+   ```
+
+**Alternative**: If the error persists even after these steps, try:
+- **Rebuild the development build** - Since `react-native-drawer-layout` is a native dependency, updating it requires rebuilding the native app:
+  ```bash
+  # Stop the server, then rebuild:
+  npx expo prebuild --clean  # Cleans and regenerates native code
+  npx expo run:ios  # or run:android
+  ```
+- Explicitly import `react-native-drawer-layout` in App.tsx before creating the drawer navigator (already added)
+- Updating `@react-navigation/drawer` to the latest version
+- Ensuring all navigation packages are on compatible versions
+- Checking if Metro bundler needs a complete restart (stop server, clear cache, restart)
+
+**Note**: The error persists because native dependencies require a full rebuild - simply restarting Metro won't pick up native code changes. The development build must be rebuilt with `expo run:ios` or `expo run:android` after updating `react-native-drawer-layout`.
+
+---
+
+## January 2025 - Home/Explore Screen Redesign
+
+### Date: January 2025
+### Changes: Transformed HomeScreen to ChatGPT-style chat interface and enhanced ExploreScreen with Spotify-style layout
+
+### HomeScreen Transformation - ChatGPT-Style Chat Interface
+
+**Motivation**: 
+Based on the ChatGPT clone documentation in `MD_DOCS/CHATGPT_CLONE.md`, transformed the HomeScreen from a form-based interface to a conversational chat interface. This provides a more engaging, intuitive way for users to interact with the app and create sessions.
+
+**Implementation**:
+- Converted from ScrollView with form inputs to FlatList with message bubbles
+- Integrated existing `MessageBubble` component from `ChatComposer` screens
+- Added typing indicator support for loading states
+- Implemented chat message flow:
+  - Initial greeting message from assistant
+  - User sends intention/goal as a message
+  - Loading message with typing indicator while generating
+  - Success message with preview of affirmations
+  - Error messages in chat format
+- Maintained all existing functionality:
+  - Quick generate workflow
+  - Recent intentions
+  - Curation card support (shown in header when chat is empty)
+  - Mini player integration
+- Used `KeyboardAvoidingView` for proper keyboard handling
+- Added proper message scrolling with auto-scroll to bottom
+- Styled input bar with send button (appears when text is entered)
+- Character counter below input
+
+**Technical Details**:
+- Reused `MessageBubble` component from `apps/mobile/src/screens/ChatComposer/components/MessageBubble.tsx`
+- Uses `randomUUID` from `expo-crypto` for message IDs
+- Maintains existing state management and API integration
+- Preserved all navigation flows and session creation logic
+
+**Files Modified**:
+- `apps/mobile/src/screens/HomeScreen.tsx` - Complete rewrite with chat interface
+
+### ExploreScreen Enhancement - Spotify-Style Layout
+
+**Motivation**: 
+Used the Spotify home clone JSX structure (`spotify_home_clone.jsx`) as inspiration to create a more polished, content-rich explore page with better visual hierarchy and sections similar to Spotify's home screen.
+
+**Implementation**:
+- Added Spotify-style header with title and settings button
+- Implemented prominent search bar at top (Spotify-style rounded search input)
+- Reorganized content sections:
+  - **Recently Played**: Horizontal scroll of last 4 sessions (Spotify-style)
+  - **Hero Deck**: Featured sessions carousel (existing component, repositioned)
+  - **Recommended for You**: Horizontal scroll section
+  - **Browse by Goal**: Grid layout with goal cards (existing component)
+  - **Programs**: Horizontal scroll cards (existing component)
+  - **Editor's Picks**: List-style section with gradient icons (Spotify-inspired)
+- Enhanced visual hierarchy:
+  - Clear section titles with proper spacing
+  - Consistent card styles
+  - Better use of horizontal scrolling for discoverability
+  - Improved spacing and padding throughout
+- Added search functionality with clear button
+- Maintained filter chips for category filtering
+- Preserved all existing functionality and navigation
+
+**Design Decisions**:
+- Followed Spotify's pattern of multiple horizontal scrolling sections for content discovery
+- Used gradient-based session cards instead of images (matching existing design system)
+- Maintained existing theme and color system
+- Kept mini player at bottom (not shown in Spotify clone but needed for audio playback)
+- Status bar styled for light content on dark background (Spotify uses dark theme, but we adapted to our light theme)
+
+**Files Modified**:
+- `apps/mobile/src/screens/ExploreScreen.tsx` - Enhanced with Spotify-style layout and improved sections
+
+### Design System Consistency
+
+Both screens now:
+- Use consistent spacing from theme tokens
+- Follow the same typography scale
+- Use existing component library (SessionTile, DuotoneCard, etc.)
+- Maintain accessibility standards
+- Support dark/light theme (using theme tokens)
+- Integrate with existing navigation and state management
+
+### Next Steps
+
+1. Test the chat interface flow end-to-end
+2. Verify keyboard handling on both iOS and Android
+3. Consider adding message persistence (save chat history)
+4. Potentially add more interactive elements in chat (quick action buttons)
+5. Test ExploreScreen with various amounts of content (empty states, many sessions)
+
+---
+
+## January 2025 - Expo CLI "Body has already been read" Error Fix
+
+### Date: January 2025
+### Issue: Expo CLI throwing "TypeError: Body is unusable: Body has already been read" during startup
+
+**Problem**:
+When running `pnpm start` or `expo start`, the Expo CLI was failing with:
+```
+TypeError: Body is unusable: Body has already been read
+    at consumeBody (node:internal/deps/undici/undici:5712:15)
+    at _Response.json (node:internal/deps/undici/undici:5665:18)
+    at getNativeModuleVersionsAsync
+```
+
+This error occurred during the dependency validation phase when Expo CLI was trying to fetch native module versions from the Expo API.
+
+**Root Cause**:
+This is a known issue with Expo CLI where the response body from an HTTP request is being read multiple times, which is not allowed in the Fetch API. This can happen due to:
+- Corrupted cache
+- Network/proxy issues
+- Expo CLI version bugs
+
+**Solution**:
+Using the `--clear` flag when starting Expo clears the Metro bundler cache and resolves the issue:
+```bash
+npx expo start --clear
+```
+
+Or from the mobile app directory:
+```bash
+cd apps/mobile
+npx expo start --clear
+```
+
+**Alternative Solutions** (if `--clear` doesn't work):
+1. Clear all Expo caches: `npx expo start -c`
+2. Use offline mode to skip dependency validation: `npx expo start --offline`
+3. Clear node_modules and reinstall: `rm -rf node_modules && pnpm install`
+4. Update Expo CLI: `pnpm add -D @expo/cli@latest`
+
+**Decision**:
+The `--clear` flag is the simplest and most effective solution. It clears the Metro bundler cache which often resolves caching-related issues with Expo CLI. This should be the first troubleshooting step when encountering similar errors.
+
+**Files Modified**:
+- None (this is a CLI usage fix, not a code change)
+
+**Note**: The `--clear` flag can be added to the start script in `apps/mobile/package.json` if this issue persists frequently, but it's generally better to use it manually when needed to avoid clearing cache on every start.

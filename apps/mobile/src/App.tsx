@@ -1,7 +1,9 @@
 import React from "react";
+import "react-native-drawer-layout"; // Ensure drawer layout is loaded before drawer navigator
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { createDrawerNavigator } from "@react-navigation/drawer";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -37,47 +39,70 @@ import { initializeRevenueCat } from "./lib/revenuecat";
 import { theme } from "./theme";
 import { setAuthToken } from "./lib/api";
 import SignInScreen from "./screens/SignInScreen";
+import ChatComposerScreen from "./screens/ChatComposerScreen";
 import { useAuth } from "@clerk/clerk-expo";
-import { FloatingTabBar } from "./components";
+import { DrawerContent, HamburgerButton } from "./components";
 
 const Stack = createNativeStackNavigator();
-const Tab = createBottomTabNavigator();
+const Drawer = createDrawerNavigator();
 const queryClient = new QueryClient();
 
 
-// Main Tab Navigator for the 4 main pages
-function MainTabs() {
+// Main Drawer Navigator
+function MainDrawer() {
   return (
-    <Tab.Navigator
-      tabBar={(props) => <FloatingTabBar {...props} />}
+    <Drawer.Navigator
+      drawerContent={(props) => <DrawerContent {...props} />}
       screenOptions={{
         headerShown: false,
-        lazy: false,
-        tabBarHideOnKeyboard: true,
+        drawerType: "front",
+        drawerStyle: {
+          width: 280,
+        },
+        overlayColor: "rgba(0, 0, 0, 0.5)",
+        drawerActiveTintColor: "#007AFF",
+        drawerInactiveTintColor: "#666666",
+        drawerHideStatusBarOnOpen: false,
+        drawerPosition: "left",
       }}
+      initialRouteName="Compose"
     >
-      <Tab.Screen
+      <Drawer.Screen
+        name="Compose"
+        component={ChatComposerScreen}
+        options={{
+          drawerLabel: "Compose",
+        }}
+      />
+      <Drawer.Screen
         name="Today"
         component={HomeScreen}
         options={{
-          title: "Today",
+          drawerLabel: "Today",
         }}
       />
-      <Tab.Screen
+      <Drawer.Screen
         name="Explore"
         component={ExploreScreen}
         options={{
-          title: "Explore",
+          drawerLabel: "Explore",
         }}
       />
-      <Tab.Screen
+      <Drawer.Screen
         name="Library"
         component={LibraryScreen}
         options={{
-          title: "Library",
+          drawerLabel: "Library",
         }}
       />
-    </Tab.Navigator>
+      <Drawer.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          drawerLabel: "Settings",
+        }}
+      />
+    </Drawer.Navigator>
   );
 }
 
@@ -95,17 +120,18 @@ function MainApp() {
   }, []);
 
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <NavigationContainer>
+        <StatusBar style="auto" />
+        <Stack.Navigator
         screenOptions={{
           // Smooth transitions for stack screens
           animation: "slide_from_right",
           animationDuration: 250,
         }}
       >
-        {/* Main tabs as the initial screen */}
-        <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
+        {/* Main drawer as the initial screen */}
+        <Stack.Screen name="MainDrawer" component={MainDrawer} options={{ headerShown: false }} />
         {/* Detail screens */}
         <Stack.Screen name="Editor" component={AIAffirmationScreen} options={{ headerShown: false }} />
         <Stack.Screen name="EditorLegacy" component={EditorScreen} options={{ headerShown: false }} />
@@ -120,7 +146,8 @@ function MainApp() {
         <Stack.Screen name="ParallaxExample" component={ParallaxExampleScreen} options={{ headerShown: false }} />
         <Stack.Screen name="OnboardingExample" component={OnboardingExampleScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
-    </NavigationContainer>
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }
 
